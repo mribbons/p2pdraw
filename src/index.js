@@ -5,6 +5,7 @@ import { randomBytes } from 'socket:crypto'
 import process from 'socket:process'
 import Buffer from 'socket:buffer'
 import Path from 'socket:path'
+import enableAppRefresh from './reload.js'
 // import fs from 'socket:fs'
 
 const makeId = async () => {
@@ -18,16 +19,11 @@ window.onload = async () => {
       return;
     }
 
-    if (event.key === 'c') connect();
+    if (event.key === 'c') connect()
+  })
 
-    
-    // do something
-  });
-
-  var home = Path.dirname(process.argv[0]);
-  console.log(`process: ${JSON.stringify(process)}`);
-  console.log(`home: ${home}`);
-  connect();
+  connect()
+  enableAppRefresh()
 }
 
 // test port hardcoded
