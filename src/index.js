@@ -1,8 +1,11 @@
+import fs from 'socket:fs/promises'
+
 import { Peer } from 'socket:peer'
 import { randomBytes } from 'socket:crypto'
 import process from 'socket:process'
 import Buffer from 'socket:buffer'
-import fs from 'socket:fs'
+import Path from 'socket:path'
+// import fs from 'socket:fs'
 
 const makeId = async () => {
   // return (await sha256(randomBytes(32))).toString('hex')
@@ -16,27 +19,68 @@ window.onload = async () => {
     }
 
     if (event.key === 'c') connect();
+
+    
     // do something
   });
+
+  var home = Path.dirname(process.argv[0]);
+  console.log(`process: ${JSON.stringify(process)}`);
+  console.log(`home: ${home}`);
 }
 
 // test port hardcoded
 
 const connect = async() => {
   try {
-    const clusterId = '0bf4140ffd12900e23aa6419b121713e898c58079b6565ab52b35e88a3b0729b'; // await makeId()
+    const clusterId = '1bf4140ffd12900e23aa6419b121713e898c58079b6565ab52b35e88a3b0729b'; // await makeId()
     const keys = await Peer.createKeys()
+    let previousId = ''
     // const publicKeyHex = await makeId()
     // const privateKeyHex = await makeId()
 
+    var home = process.env.HOME || process.env.HOMEDIR || process.homedir();
+
+    // var home = Path.dirname(process.argv[0]);
+    var suffix = ""
+    if (process.argv.find((v) => { return v === '--from-ssc' }))
+    {
+      suffix = "_ssc"
+    }
+
+    const pathname = `${home}/p2pdraw${suffix}.json`;
+    console.log(`config path: ${pathname}`);
+    let save_config = true
+    try {
+      let data = JSON.parse(await fs.readFile(pathname))
+      keys.publicKey = Buffer.from(data.publicKey, 'hex').buffer
+      keys.privateKey = Buffer.from(data.privateKey, 'hex').buffer
+      save_config = false
+      console.log(`read config: ${pathname}`)
+    } catch {
+
+    }
+
+    if (save_config) {
+      console.log(`saved config: ${pathname}`)
+      let data = {}
+      // data.publicKey = Buffer.from(keys.publicKey, 'hex').buffer;
+      data.publicKey = Buffer.from(keys.publicKey).toString('hex');
+      data.privateKey = Buffer.from(keys.privateKey).toString('hex');
+      fs.writeFile(pathname, JSON.stringify(data));
+    }
+
     console.log(`clusterId: ${clusterId}`);
     console.log(`keys: ${JSON.stringify(keys)}`)
+    const publicKey = Buffer.from(keys.publicKey).toString('hex')
+    const privateKey = Buffer.from(keys.privateKey).toString('hex')
 
     // const publicKey = Buffer.from(publicKeyHex, 'hex').buffer
     // const privateKey = Buffer.from(privateKeyHex, 'hex').buffer
 
-    let peerId = await makeId()
-    peerId = "666333" + peerId.substring(-6);
+    // let peerId = await makeId()
+    let peerId = publicKey;
+    // peerId = "666333" + peerId.substring(-6);
 
     const peer = new Peer({ peerId, ...keys, clusterId })
     window.peer = peer
@@ -73,7 +117,7 @@ const connect = async() => {
     }
 
     const network = await peer.join()
-    console.log('join returned...');
+    console.log(`join returned: ${network.peerId}`);
 
     const getOffset = e => {
       if (e.offsetX) return { offsetX: e.offsetX, offsetY: e.offsetY }
@@ -116,15 +160,30 @@ const connect = async() => {
       if (o.offsetX > 0) x = o.offsetX
       if (o.offsetY > 0) y = o.offsetY
 
-      for (const remotePeer of network.peers) {
-        //
-        // only send this to peers in my cluster because they are the
-        // only peers who will know who to accept this kind of message.
-        //
-        console.log(`remote peer: ${remotePeer.peerId}`);
-        if (remotePeer.clusterId !== clusterId && remotePeer.peerId.substring(0,6) !== peerId.substring(0,6)) continue
-        network.send(data, remotePeer.port, remotePeer.address)
+      sendData(data);
+    }    
+
+    const sendData = async data => {
+      const packetOpts = {
+        previousId: previousId,
+        clusterId: clusterId,
+        // to: publicKey,
+        to: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        message: {
+          peerId: publicKey,
+          content: data,
+          ts: Date.now()
+        }
       }
+
+      console.log(`send data: ${JSON.stringify(packetOpts)}`);
+      // cache packets locally
+      
+      const packets = await network.publish(packetOpts)
+      packets.forEach(p => 
+        {
+          previousId = p.packetId
+        })
     }
 
     canvas.addEventListener('touchstart', penDown)
@@ -140,16 +199,56 @@ const connect = async() => {
       console.log(network.peerId, network.address, network.port, 'CONNECT', ...args)
     }
 
-    network.onData = (packet, port, address, data) => {
-      if (packet.type) return
+    network.onPacket = async (packet, port, address) => {
+      const message = JSON.parse(packet.message)
+      console.log(`onPacket, timestamp: ${message.ts}`);
+    //   console.log(`on packet: ${address}: ${JSON.stringify(packet)}`)
+    //   // data = Buffer.from(packet.message.content).toString()
+    //   // console.log(`data: ${data}`);
+    //   console.log(`content: ${packet.message.content}`)
+    //   const message = JSON.parse(packet.message)
+    //   const data = Buffer.from(message.content).toString()
 
-      console.log(`peers: ${network.peers.length}`)
+    //   try {
+    //     const { x1, y1, x2, y2 } = JSON.parse(data)
+    //     drawLine(context, 'red', x1, y1, x2, y2)
+    //   } catch (err) {
+    //     console.log(err)
+    //   }
+    }
 
+    network.onData = (packet, port, address, data1) => {
+
+      if (packet.clusterId != clusterId)
+        return
+
+      let packetdate = `Invalid: ${packet.message.ts || packet.timestamp}`;
       try {
-        const { x1, y1, x2, y2 } = JSON.parse(data)
-        drawLine(context, 'red', x1, y1, x2, y2)
+        packetdate = new Date(packet.message.ts || packet.timestamp).toISOString()
+      } catch {}
+
+      console.log(`onData: ${JSON.stringify(packet)} (${packetdate})`)
+      // console.log(`from: ${address}, data: ${JSON.stringify(data)}`)
+      // if (packet.type) return
+
+      // console.log(`peers: ${network.peers.length}`)
+      // const dataJson = Buffer.from(data).toString()
+      // console.log(`data json: ${dataJson}`)
+      // const data3 = JSON.parse(dataJson)
+      // console.log(`data 3: ${JSON.stringify(data3)}`)
+
+      // const message = JSON.parse(packet.message)
+      try {
+        if (!packet.message.content) {
+          console.log(`packet without content: ${JSON.stringify(packet)} (${packetdate})`)
+        } else {
+          const data = Buffer.from(packet.message.content).toString()
+          console.log(`data: ${JSON.stringify(data)}`)
+          const { x1, y1, x2, y2 } = JSON.parse(data)
+          drawLine(context, 'red', x1, y1, x2, y2)
+        }
       } catch (err) {
-        // console.error(err)
+        console.log(err)
       }
     }
 
