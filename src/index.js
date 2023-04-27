@@ -27,6 +27,7 @@ window.onload = async () => {
   var home = Path.dirname(process.argv[0]);
   console.log(`process: ${JSON.stringify(process)}`);
   console.log(`home: ${home}`);
+  connect();
 }
 
 // test port hardcoded
@@ -95,8 +96,8 @@ const connect = async() => {
     const context = canvas.getContext('2d')
 
     const setSize = () => {
-      canvas.width = document.body.offsetWidth
-      canvas.height = document.body.offsetHeight
+      canvas.width = window.innerWidth - 30
+      canvas.height = window.innerHeight - 30
     }
 
     setSize()
@@ -117,6 +118,7 @@ const connect = async() => {
     }
 
     const network = await peer.join()
+    console.log(`joining...`);
     console.log(`join returned: ${network.peerId}`);
     const connect_time = new Date().getTime();
 
@@ -228,7 +230,7 @@ const connect = async() => {
       if (packet.clusterId != clusterId)
         return
 
-      if (packet.message.peerId == peerId && packet.timestamp.message.ts > connect_time) {
+      if (packet.message.peerId == peerId && packet.message.ts > connect_time) {
         console.log(`ignoring new message from self: ${new DateTime(packet.timestamp.message.ts).toISOString()}`)
         return
       }
