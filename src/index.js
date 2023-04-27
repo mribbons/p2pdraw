@@ -118,6 +118,7 @@ const connect = async() => {
 
     const network = await peer.join()
     console.log(`join returned: ${network.peerId}`);
+    const connect_time = new Date().getTime();
 
     const getOffset = e => {
       if (e.offsetX) return { offsetX: e.offsetX, offsetY: e.offsetY }
@@ -207,20 +208,30 @@ const connect = async() => {
     //   // console.log(`data: ${data}`);
     //   console.log(`content: ${packet.message.content}`)
     //   const message = JSON.parse(packet.message)
-    //   const data = Buffer.from(message.content).toString()
+      const data = Buffer.from(message.content).toString()
 
-    //   try {
-    //     const { x1, y1, x2, y2 } = JSON.parse(data)
-    //     drawLine(context, 'red', x1, y1, x2, y2)
-    //   } catch (err) {
-    //     console.log(err)
-    //   }
+      // draw the line to distinguish if 
+      // a) we're getting an event of our own packets at a reliable rate (so they are being recorded) 
+      // b) this event ever fires for external packets
+      var color = packet.message.peerId == peerId ? 'green' : 'blue';
+
+      try {
+        const { x1, y1, x2, y2 } = JSON.parse(data)
+        drawLine(context, color, x1+3, y1+3, x2+3, y2+3)
+      } catch (err) {
+        console.log(err)
+      }
     }
 
     network.onData = (packet, port, address, data1) => {
 
       if (packet.clusterId != clusterId)
         return
+
+      if (packet.message.peerId == peerId && packet.timestamp.message.ts > connect_time) {
+        console.log(`ignoring new message from self: ${new DateTime(packet.timestamp.message.ts).toISOString()}`)
+        return
+      }
 
       let packetdate = `Invalid: ${packet.message.ts || packet.timestamp}`;
       try {
