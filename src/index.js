@@ -1,11 +1,11 @@
-import fs from 'socket:fs/promises'
+import fs, {constants} from 'socket:fs/promises'
 
 import { Peer } from 'socket:peer'
 import { randomBytes } from 'socket:crypto'
 import process from 'socket:process'
+import os from 'socket:os'
 import Buffer from 'socket:buffer'
-import Path from 'socket:path'
-import enableAppRefresh from './reload.js'
+import enableSocketReload from './socket-reload.js'
 // import fs from 'socket:fs'
 
 const makeId = async () => {
@@ -20,10 +20,26 @@ window.onload = async () => {
     }
 
     if (event.key === 'c') connect()
+    // if (event.key === 'b') sscBuildOutput(process.cwd())
   })
 
-  connect()
-  enableAppRefresh()
+  // connect()
+  // enableAppRefresh({ path: ".\\..\\..\\..\\src" })
+  enableSocketReload({startDir: process.cwd(),
+    updateCallback: () => { 
+      console.log(`updateCallback ============`)
+      window.location.reload()
+    },
+    scanInterval: 200,
+    debounce: 1000,
+    debounceCallback: () => {
+      console.log(`updates inbound...`);
+    }
+  })
+
+  // var name = Path.win32.dirname('d:\\code\\socket')
+  // console.log(`dirname(\'d:\\code\\socket\'): ${name}`)
+  // sscBuildOutput(process.cwd())
 }
 
 // test port hardcoded
