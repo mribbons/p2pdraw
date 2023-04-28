@@ -1,6 +1,12 @@
 /* 
 
-Socket live reload module
+Socket Reload Module
+v2:
+  supports keyboard mode by default
+
+v2.1:
+  fix linux and mac support (find app path)
+  call application.backend.close()
 
 Todo:
   Only works on desktop, there needs to be a way to tell mobile apps to update, and they should also pull assets from an http server
@@ -9,18 +15,28 @@ usage:
 
 import enableSocketReload from './reload.js'
 
-window.onload = async () => {
+// method 1 - manual refresh using ctrl+r, cmd+r, F5
+window.addEventListener('load', async () => {
+  enableSocketReload({startDir: process.cwd()})
+  // optionally implement a custom callback, you can use this to call custom cleanup code. defaults to window.location.reload()
+  updateCallback: () => { window.location.reload() } 
+})
+
+// method 2 - live reload
+window.addEventListener('load', async () => {
     enableSocketReload({startDir: process.cwd(),
+    liveReload: true,
     scanInterval: 200, // how often to check for changes
     debounce: 1000, // how long to wait before calling updateCallback
     debounceCallback: () => { // This gets called when debounce is set (changes detected but updateCallback not called)
       console.log(`updates inbound...`);
     },
-    updateCallback: () => {  // called after debounce has elapsed
+    // optionally implement a custom callback, called after debounce has elapsed
+    updateCallback: () => {
       window.location.reload()
     }
   })
-}
+})
 
 */
 
@@ -28,6 +44,8 @@ import fs from 'socket:fs/promises'
 import process from 'socket:process'
 import Buffer from 'socket:buffer'
 import Path from 'socket:path'
+import application from 'socket:application'
+import os from 'socket:os'
 
 let enabled = false
 let _interval = null
@@ -60,14 +78,26 @@ const enableSocketReload = async (opts = {}) => {
     }
   }
 
+  if (opts.liveReload === undefined) {
+    opts.liveReload = false
+  }
+
+  console.log(`liveReload: ${opts.liveReload}`)
+
   _opts = opts;
 
   if (enabled === opts.enable)
     return
 
   if (opts.enable) {
-    let ini = parseIni(Buffer.from(await fs.readFile('../../../socket.ini')).toString())
-    let _appBasePath = Path.join(process.cwd(), '../../../../').replaceAll('\\\\', '\\')
+    console.log(`platform: ${os.platform()}`)
+    let osParent = '' // define os specific parent path
+    os.platform() === 'darwin' && (osParent = '../')
+    os.platform() === 'linux' && (osParent = '../')
+    let parentPath = Path.join(_opts.startDir, `${osParent}../../../..`);
+    console.log(`ini path: ${`${parentPath}/socket.ini`}`)
+    let ini = parseIni(Buffer.from(await fs.readFile(`${parentPath}/socket.ini`)).toString())
+    let _appBasePath = Path.join(process.cwd(), `${parentPath}/../`).replaceAll('\\\\', '\\')
     _copyPath = Path.join(_appBasePath, ini['build']['copy'].replaceAll('"', ''))
 
     console.log(`enableSocketReload: ${opts.enable}, _path: ${_copyPath} => ${_opts.startDir}`)
@@ -80,11 +110,21 @@ const enableSocketReload = async (opts = {}) => {
       opts.scanInterval = scanInterval;
     }
 
-    // dev, remove initial check
-    setTimeout(checkRefresh, 100);
-    _interval = setInterval(checkRefresh, opts.scanInterval)
-    enabled = true;
-    _lastUpdate = new Date().getTime()
+    if (!opts.updateCallback) {
+      opts.updateCallback = () => { window.location.reload() }
+    }
+
+    window.addEventListener("keydown", (event) => {
+      if(((event.ctrlKey || event.metaKey) && event.key === 'r') || event.key === 'F5') {
+        event.preventDefault()
+        reload()
+      }
+    })
+
+    if (opts.liveReload) {
+      _interval = setInterval(checkRefresh, opts.scanInterval)
+    }
+    enabled = true
   } else {
     clearInterval(_interval)
     enabled = false;
@@ -117,6 +157,12 @@ const parseIni = (iniString) => {
   })
 
   return map
+}
+
+const reload = async () => {
+  await sscBuildOutput(_opts.startDir)
+  _opts.updateCallback()
+  application.backend.close()
 }
 
 const sscBuildOutput = async (dest) => {
@@ -170,19 +216,18 @@ const sscBuildOutput = async (dest) => {
 const checkRefresh = async () => {
   try {
     if (await sscBuildOutput(_opts.startDir)) {
-      if (_opts.updateCallback) {
-        if (_opts.debounce > -1) {
-          clearTimeout(_debounce_handle);
-          // if debounce wait to update, other updates will reset update timeout
-          setTimeout(() => {_opts.updateCallback()}, _opts.debounce)
-          
-          // Let consumer know that an update is coming
-          if (_opts.debounceCallback) {
-            _opts.debounceCallback();
-          }
-        } else {
-          _opts.updateCallback()
+      if (_opts.debounce > -1) {
+        clearTimeout(_debounce_handle)
+        // if debounce wait to update, other updates will reset update timeout
+        setTimeout(() => {_opts.updateCallback()}, _opts.debounce)
+        
+        // Let consumer know that an update is coming
+        if (_opts.debounceCallback) {
+          _opts.debounceCallback();
         }
+      } else {
+        await _opts.updateCallback()
+        application.backend.close()
       }
     }
   } catch (e) {

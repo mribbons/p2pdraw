@@ -6,6 +6,7 @@ import process from 'socket:process'
 import os from 'socket:os'
 import Buffer from 'socket:buffer'
 import enableSocketReload from './socket-reload.js'
+import application from 'socket:application'
 // import fs from 'socket:fs'
 
 const makeId = async () => {
@@ -13,7 +14,7 @@ const makeId = async () => {
   return (await Peer.createClusterId())
 }
 
-window.onload = async () => {
+window.addEventListener('load', async () => {
   window.addEventListener("keyup", (event) => {
     if (event.isComposing) {
       return;
@@ -23,9 +24,20 @@ window.onload = async () => {
     // if (event.key === 'b') sscBuildOutput(process.cwd())
   })
 
+  // window.addEventListener("keydown", (event) => {
+  //   if(((event.ctrlKey || event.metaKey) && event.key === 'r') || event.key == 'F5') {
+  //     event.preventDefault();
+  //     window.location.reload();
+  //   }
+  // })
+
   // connect()
   // enableAppRefresh({ path: ".\\..\\..\\..\\src" })
+  // enableSocketReload({startDir: process.cwd()})
+
+
   enableSocketReload({startDir: process.cwd(),
+    liveReload: true,
     updateCallback: () => { 
       console.log(`updateCallback ============`)
       window.location.reload()
@@ -37,10 +49,22 @@ window.onload = async () => {
     }
   })
 
+  // doesn't work
+  console.log(`open inspector`)
+  try {
+    let currWindow = await application.getCurrentWindow()
+    // todo(@mribbons): errors aren't written to console on windows
+    // todo(@mribbons): doesn't work on windows
+    await currWindow.showInspector()
+    // await currWindow.hide()
+    // await currWindow.show()
+  } catch (e) {
+    console.log(`e ${e}`)
+  }
   // var name = Path.win32.dirname('d:\\code\\socket')
   // console.log(`dirname(\'d:\\code\\socket\'): ${name}`)
   // sscBuildOutput(process.cwd())
-}
+})
 
 // test port hardcoded
 
