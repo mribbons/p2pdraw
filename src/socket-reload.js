@@ -117,7 +117,7 @@ const enableSocketReload = async (opts = {}) => {
     window.addEventListener("keydown", (event) => {
       if(((event.ctrlKey || event.metaKey) && event.key === 'r') || event.key === 'F5') {
         event.preventDefault()
-        reload()
+        startReload()
       }
     })
 
@@ -161,8 +161,18 @@ const parseIni = (iniString) => {
 
 const reload = async () => {
   await sscBuildOutput(_opts.startDir)
-  _opts.updateCallback()
-  application.backend.close()
+  await _opts.updateCallback()
+  await application.backend.close()  
+}
+
+const startReload = async () => {
+  // provide warning via debounce to give app a chance to clear resources
+  if (_opts.debounce > -1) {
+    if (_opts.debounceCallback) {
+      await _opts.debounceCallback();
+      setTimeout(reload, _opts.debounce);
+    }
+  }
 }
 
 const sscBuildOutput = async (dest) => {
@@ -219,15 +229,18 @@ const checkRefresh = async () => {
       if (_opts.debounce > -1) {
         clearTimeout(_debounce_handle)
         // if debounce wait to update, other updates will reset update timeout
-        setTimeout(() => {_opts.updateCallback()}, _opts.debounce)
+        setTimeout(async () => {
+            await _opts.updateCallback()
+            await application.backend.close()
+          }, _opts.debounce)
         
         // Let consumer know that an update is coming
         if (_opts.debounceCallback) {
-          _opts.debounceCallback();
+          await _opts.debounceCallback();
         }
       } else {
         await _opts.updateCallback()
-        application.backend.close()
+        await application.backend.close()
       }
     }
   } catch (e) {
