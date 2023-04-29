@@ -29,7 +29,7 @@ window.addEventListener('load', async () => {
     scanInterval: 200, // how often to check for changes
     debounce: 1000, // how long to wait before calling updateCallback
     debounceCallback: () => { // This gets called when debounce is set (changes detected but updateCallback not called)
-      console.log(`updates inbound...`);
+      _log(`updates inbound...`);
     },
     // optionally implement a custom callback, called after debounce has elapsed
     updateCallback: () => {
@@ -55,6 +55,7 @@ let _opts = {}
 
 let _copyPath = undefined
 let _debounce_handle = null;
+let _log = console.log
 
 const recursePath = async(path, file_fn, data) => {
   for (const entry of (await fs.readdir(path, {withFileTypes: true}))) {
@@ -72,6 +73,10 @@ const enableSocketReload = async (opts = {}) => {
     opts.enable = true
   }
 
+  if (opts.log) {
+    _log = opts.log
+  }
+
   if (opts.enable) {
     if (!opts.startDir) {
       throw "startDir must be defined to monitor for file changes."
@@ -82,7 +87,7 @@ const enableSocketReload = async (opts = {}) => {
     opts.liveReload = false
   }
 
-  console.log(`liveReload: ${opts.liveReload}`)
+  _log(`liveReload: ${opts.liveReload}`)
 
   _opts = opts;
 
@@ -90,17 +95,17 @@ const enableSocketReload = async (opts = {}) => {
     return
 
   if (opts.enable) {
-    console.log(`platform: ${os.platform()}`)
+    _log(`platform: ${os.platform()}`)
     let osParent = '' // define os specific parent path
     os.platform() === 'darwin' && (osParent = '../')
     os.platform() === 'linux' && (osParent = '../')
     let parentPath = Path.join(_opts.startDir, `${osParent}../../../..`);
-    console.log(`ini path: ${`${parentPath}/socket.ini`}`)
+    _log(`ini path: ${`${parentPath}/socket.ini`}`)
     let ini = parseIni(Buffer.from(await fs.readFile(`${parentPath}/socket.ini`)).toString())
     let _appBasePath = Path.join(process.cwd(), `${parentPath}/../`).replaceAll('\\\\', '\\')
     _copyPath = Path.join(_appBasePath, ini['build']['copy'].replaceAll('"', ''))
 
-    console.log(`enableSocketReload: ${opts.enable}, _path: ${_copyPath} => ${_opts.startDir}`)
+    _log(`enableSocketReload: ${opts.enable}, _path: ${_copyPath} => ${_opts.startDir}`)
     
     if (opts.debounce === undefined) {
       opts.debounce = -1
@@ -189,7 +194,7 @@ const sscBuildOutput = async (dest) => {
     try {
       exists = await fs.access(dest_path) // todo(mribbons) fs.access should not throw exception
     } catch {
-      // console.log(`dest doesn't exist: ${dest_path}`);
+      // _log(`dest doesn't exist: ${dest_path}`);
     }
 
     let stat1 = await fs.stat(file);
@@ -197,20 +202,20 @@ const sscBuildOutput = async (dest) => {
       let stat2 = await fs.stat(dest_path);
 
       if (stat1.mtimeMs > stat2.mtimeMs || stat1.size !== stat2.size) {
-        // console.log(`update ${file}: ${stat1.mtimeMs} > ${stat2.mtimeMs}`)
+        // _log(`update ${file}: ${stat1.mtimeMs} > ${stat2.mtimeMs}`)
         update = true;
       }
       //  else {
-      //   console.log(`ok ${file}: ${stat1.mtimeMs} <= ${stat2.mtimeMs}`)
+      //   _log(`ok ${file}: ${stat1.mtimeMs} <= ${stat2.mtimeMs}`)
       // }
     } else {
-      // console.log(`not in dest ${file} => ${dest_path}`)
+      // _log(`not in dest ${file} => ${dest_path}`)
       update = true
     }
     
     if (update) {
       // todo(@mribbons): fs.mkdir(dirname(dest_path)) - dirname / drive letter issue on win32
-      // console.log(`copy file: ${file} -> ${dest_path}`)
+      // _log(`copy file: ${file} -> ${dest_path}`)
       // todo(@mribbons) - copyFile and utimes are noops. Without utimes we can't check times are even, only newer, which isn't great
       // await fs.copyFile(file, dest_path)
       // await fs.utimes(dest_path, parseInt(stat1.mtimeMs), parseInt(stat1.mtimeMs))
@@ -219,7 +224,7 @@ const sscBuildOutput = async (dest) => {
     }
   }, recurseData)
 
-  // console.log(`recurse data changed: ${recurseData.changed}`)
+  // _log(`recurse data changed: ${recurseData.changed}`)
   return recurseData.changed
 }
 
@@ -244,7 +249,7 @@ const checkRefresh = async () => {
       }
     }
   } catch (e) {
-    console.log(e)
+    _log(e)
   }
 }
 

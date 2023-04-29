@@ -1,10 +1,11 @@
 import dgram from 'socket:dgram'
 
 export default class NetTest {
-  constructor (address, port, callback, error) {
+  constructor (address, port, _log) {
     this.address = address
     this.port = port
     this.listening = false
+    this.log = _log || log
   }
 
   async listen(cb) {
@@ -35,13 +36,13 @@ export default class NetTest {
       try {
         await this.socket.close()
       } catch (e) {
-        console.log(`server close failed: ${e.message + '\n' + e.stack}`)
+        log(`server close failed: ${e.message + '\n' + e.stack}`)
       }
       
       try {
         await this.socket.disconnect()
       } catch (e) {
-        console.log(`server disconnect failed: ${e.message + '\n' + e.stack}`)
+        log(`server disconnect failed: ${e.message + '\n' + e.stack}`)
       }
     } else {
       await this.socket.disconnect()

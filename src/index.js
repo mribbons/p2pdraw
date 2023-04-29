@@ -12,8 +12,15 @@ import NetTest from './NetTest.js'
 
 let logElem = document.getElementById('logPre')
 
-const log = (message) => {
-  logElem.innerText += message
+const log = (...args) => {
+  for (let arg of args) {
+    let out = arg
+    if (typeof arg !== 'string') out = JSON.stringify(arg)
+    console.log(arg)    
+    logElem && (logElem.innerText += out + '\n')
+  }
+  
+  document.scrollingElement.scrollTo(0, document.scrollingElement.scrollHeight)
 }
 
 log('app starting')
@@ -54,19 +61,20 @@ window.addEventListener('load', async () => {
   enableSocketReload({startDir: process.cwd(),
     liveReload: true,
     updateCallback: () => {
-      console.log(`updateCallback ============`)
+      log(`updateCallback ============`)
       window.location.reload()
     },
     scanInterval: 200,
     debounce: 500,
     debounceCallback: () => {
-      console.log(`updates inbound, closing network`);
+      log(`updates inbound, closing network`);
       netTestClear()
-    }
+    },
+    log: log
   })
 
   // doesn't work
-  console.log(`open inspector`)
+  log(`open inspector`)
   try {
     let currWindow = await application.getCurrentWindow()
     // todo(@mribbons): errors aren't written to console on windows
@@ -75,10 +83,10 @@ window.addEventListener('load', async () => {
     // await currWindow.hide()
     // await currWindow.show()
   } catch (e) {
-    console.log(`error opening inspector ${e.message + '\n' + e.stack}`)
+    log(`error opening inspector ${e.message + '\n' + e.stack}`)
   }
   // var name = Path.win32.dirname('d:\\code\\socket')
-  // console.log(`dirname(\'d:\\code\\socket\'): ${name}`)
+  // log(`dirname(\'d:\\code\\socket\'): ${name}`)
   // sscBuildOutput(process.cwd())
 })
 
@@ -102,20 +110,20 @@ const connect = async() => {
     }
 
     const pathname = `${home}/p2pdraw${suffix}.json`;
-    console.log(`config path: ${pathname}`);
+    log(`config path: ${pathname}`);
     let save_config = true
     try {
       let data = JSON.parse(await fs.readFile(pathname))
       keys.publicKey = Buffer.from(data.publicKey, 'hex').buffer
       keys.privateKey = Buffer.from(data.privateKey, 'hex').buffer
       save_config = false
-      console.log(`read config: ${pathname}`)
+      log(`read config: ${pathname}`)
     } catch {
 
     }
 
     if (save_config) {
-      console.log(`saved config: ${pathname}`)
+      log(`saved config: ${pathname}`)
       let data = {}
       // data.publicKey = Buffer.from(keys.publicKey, 'hex').buffer;
       data.publicKey = Buffer.from(keys.publicKey).toString('hex');
@@ -123,8 +131,8 @@ const connect = async() => {
       fs.writeFile(pathname, JSON.stringify(data));
     }
 
-    console.log(`clusterId: ${clusterId}`);
-    console.log(`keys: ${JSON.stringify(keys)}`)
+    log(`clusterId: ${clusterId}`);
+    log(`keys: ${JSON.stringify(keys)}`)
     const publicKey = Buffer.from(keys.publicKey).toString('hex')
     const privateKey = Buffer.from(keys.privateKey).toString('hex')
 
@@ -137,11 +145,11 @@ const connect = async() => {
 
     const peer = new Peer({ peerId, ...keys, clusterId })
     window.peer = peer
-    console.log('created peer')
+    log('created peer')
 
     const canvas = document.getElementsByTagName('canvas')[0]
     if (!canvas) {
-      console.log(`unable to get canvas...`);
+      log(`unable to get canvas...`);
       return;
     }
 
@@ -170,8 +178,8 @@ const connect = async() => {
     }
 
     const network = await peer.join()
-    console.log(`joining...`);
-    console.log(`join returned: ${network.peerId}`);
+    log(`joining...`);
+    log(`join returned: ${network.peerId}`);
     const connect_time = new Date().getTime();
 
     const getOffset = e => {
@@ -231,7 +239,7 @@ const connect = async() => {
         }
       }
 
-      console.log(`send data: ${JSON.stringify(packetOpts)}`);
+      log(`send data: ${JSON.stringify(packetOpts)}`);
       // cache packets locally
       
       const packets = await network.publish(packetOpts)
@@ -251,17 +259,17 @@ const connect = async() => {
     canvas.addEventListener('mousemove', penMove)
 
     network.onConnection = (...args) => {
-      console.log(`network.onConnect: ${JSON.stringify(args)}`);
-      console.log(network.peerId, network.address, network.port, 'CONNECT', ...args)
+      log(`network.onConnect: ${JSON.stringify(args)}`);
+      log(network.peerId, network.address, network.port, 'CONNECT', ...args)
     }
 
     network.onPacket = async (packet, port, address) => {
       const message = JSON.parse(packet.message)
-      // console.log(`onPacket, timestamp: ${message.ts}`);
-    //   console.log(`on packet: ${address}: ${JSON.stringify(packet)}`)
+      // log(`onPacket, timestamp: ${message.ts}`);
+    //   log(`on packet: ${address}: ${JSON.stringify(packet)}`)
     //   // data = Buffer.from(packet.message.content).toString()
-    //   // console.log(`data: ${data}`);
-    //   console.log(`content: ${packet.message.content}`)
+    //   // log(`data: ${data}`);
+    //   log(`content: ${packet.message.content}`)
     //   const message = JSON.parse(packet.message)
       const data = Buffer.from(message.content).toString()
 
@@ -274,7 +282,7 @@ const connect = async() => {
         const { x1, y1, x2, y2 } = JSON.parse(data)
         drawLine(context, color, x1+3, y1+3, x2+3, y2+3)
       } catch (err) {
-        console.log(err)
+        log(err)
       }
     }
 
@@ -284,7 +292,7 @@ const connect = async() => {
         return
 
       if (packet.message.peerId == peerId && packet.message.ts > connect_time) {
-        // console.log(`ignoring new message from self: ${new DateTime(packet.timestamp.message.ts).toISOString()}`)
+        // log(`ignoring new message from self: ${new DateTime(packet.timestamp.message.ts).toISOString()}`)
         return
       }
 
@@ -293,28 +301,28 @@ const connect = async() => {
         packetdate = new Date(packet.message.ts || packet.timestamp).toISOString()
       } catch {}
 
-      // console.log(`onData: ${JSON.stringify(packet)} (${packetdate})`)
-      // console.log(`from: ${address}, data: ${JSON.stringify(data)}`)
+      // log(`onData: ${JSON.stringify(packet)} (${packetdate})`)
+      // log(`from: ${address}, data: ${JSON.stringify(data)}`)
       // if (packet.type) return
 
-      // console.log(`peers: ${network.peers.length}`)
+      // log(`peers: ${network.peers.length}`)
       // const dataJson = Buffer.from(data).toString()
-      // console.log(`data json: ${dataJson}`)
+      // log(`data json: ${dataJson}`)
       // const data3 = JSON.parse(dataJson)
-      // console.log(`data 3: ${JSON.stringify(data3)}`)
+      // log(`data 3: ${JSON.stringify(data3)}`)
 
       // const message = JSON.parse(packet.message)
       try {
         if (!packet.message.content) {
-          // console.log(`packet without content: ${JSON.stringify(packet)} (${packetdate})`)
+          // log(`packet without content: ${JSON.stringify(packet)} (${packetdate})`)
         } else {
           const data = Buffer.from(packet.message.content).toString()
-          // console.log(`data: ${JSON.stringify(data)}`)
+          // log(`data: ${JSON.stringify(data)}`)
           const { x1, y1, x2, y2 } = JSON.parse(data)
           drawLine(context, 'red', x1, y1, x2, y2)
         }
       } catch (err) {
-        console.log(err)
+        log(err)
       }
     }
 
@@ -325,7 +333,7 @@ const connect = async() => {
       network.close()
     })
   } catch (e) {
-    console.log(e);
+    log(e);
   }
 }
 
@@ -335,64 +343,64 @@ let twoway = undefined
 let server_port=30001
 
 const netTestServer = async () => {
-  console.log(`server listen...`)
+  log(`server listen...`)
   try {
-    server = new NetTest('127.0.0.1', server_port)
+    server = new NetTest('127.0.0.1', server_port, log)
     await server.listen((err) => {
-      if (err) console.log(err)
-      else console.log('server received connection')
+      if (err) log(err)
+      else log('server received connection')
     })
     server.socket.on('message', async (data, {port, address}) =>  {
-      console.log(`server received ${data} from ${address}:${port}`)
+      log(`server received ${data} from ${address}:${port}`)
       // server.send(`ack ${message}`)      
       let e = await server.send(`ack ${data}`, port, address, () => {
-        console.log(`server send done`)
+        log(`server send done`)
       })
       if (e) {
-        console.log(`server send error: ${e.message + '\n' + e.stack}`)
+        log(`server send error: ${e.message + '\n' + e.stack}`)
       } else {
-        console.log(`server send done`)
+        log(`server send done`)
       }
     })
     // let err = await server.listen((message) => {
-    //   console.log(`server received ${message}`)
+    //   log(`server received ${message}`)
     //   server.send(`ack ${message}`)
     // })    
-    console.log(`server listening`)
+    log(`server listening`)
     twoway = server
   } catch (e) {
-    console.log(`server error: ${e.message + '\n' + e.stack}`)
+    log(`server error: ${e.message + '\n' + e.stack}`)
   }
 }
 
 let client = undefined
 
 const netTestClient = async () => {
-  console.log(`client connecting`);
+  log(`client connecting`);
   try {
-    client = new NetTest('127.0.0.1', 30001)
+    client = new NetTest('127.0.0.1', 30001, log)
     await client.connect((e) => {
       if (e) {
-        console.log(`client connect failed: ${e.message + '\n' + e.stack}`)
+        log(`client connect failed: ${e.message + '\n' + e.stack}`)
       } else {
-        console.log(`client connected`)
+        log(`client connected`)
         twoway = client
       }
     })
 
     client.socket.on('message', (data, {port, address}) =>  {
-      console.log(`client received ${data}`)
+      log(`client received ${data}`)
     })
     // let err = await client.connect((message) => {
-    //   console.log(`client received: ${message}`)
+    //   log(`client received: ${message}`)
     // })
     // if (err) {
-    //   console.log(`client error: ${JSON.stringify(err)}`)
+    //   log(`client error: ${JSON.stringify(err)}`)
     // } else {
-    //   console.log(`client connected`)
+    //   log(`client connected`)
     // }
   } catch (e) {
-    console.log(`client error: ${e.message + '\n' + e.stack}`)
+    log(`client error: ${e.message + '\n' + e.stack}`)
   }
 }
 
@@ -400,17 +408,17 @@ const netTestClientSend = async () => {
   try {
     let e = await twoway.send(`Hello it's ${new Date().toISOString()}`)
     if (e) {
-      console.log(`client send error: ${e.message + '\n' + e.stack}`)
+      log(`client send error: ${e.message + '\n' + e.stack}`)
     } else {
-      console.log(`client send done`)
+      log(`client send done`)
     }
   } catch (e) {
-    console.log(`client error: ${e.message + '\n' + e.stack}`)
+    log(`client error: ${e.message + '\n' + e.stack}`)
   }
 }
 
 const netTestClear = async () => {
-  console.log(`netTestClear()`)
+  log(`netTestClear()`)
   let _server = server
   let _client = client
   server = null
@@ -420,11 +428,11 @@ const netTestClear = async () => {
     if (_server) await _server.disconnect()
     if (_client) await _client.disconnect()
   } catch (e) {
-    console.log(`net clear error: ${e.message + '\n' + e.stack}`)
+    log(`net clear error: ${e.message + '\n' + e.stack}`)
   }
 }
 const windowLoad = async () => {
-  console.log(`window load`);
+  log(`window load`);
   
   // setTimeout(androidFileWriteTest, 500)
   window.addEventListener("beforeunload", async () => {
@@ -433,12 +441,12 @@ const windowLoad = async () => {
 }
 
 const androidFileWriteTest = async() => {
-  console.log(`cwd: ${process.cwd()}`)
+  log(`cwd: ${process.cwd()}`)
   try {
     let html = `
     <html>
     <script>
-    console.log('javascript.......')
+    log('javascript.......')
     </script>
     <body>
     <p>hello</p>
@@ -446,18 +454,18 @@ const androidFileWriteTest = async() => {
     </html>
     `
     await fs.writeFile("test.html", Buffer.from(html).buffer)
-    console.log(`initial location: ${window.location.href}`)
+    log(`initial location: ${window.location.href}`)
     // let location = `file://${process.cwd()}/test.html`
     let location = `reload:${process.cwd()}/test.html`
-    console.log(`nav to ${location}`)
+    log(`nav to ${location}`)
     window.location.href = location
-    // console.log(`wrote file`);
+    // log(`wrote file`);
     // no files in app/files on android
     // for (const entry of (await fs.readdir(`${process.cwd()}`, {withFileTypes: true}))) {
-    //   console.log(`file: ${entry.name}`)
+    //   log(`file: ${entry.name}`)
     // }
     // await fs.readFile("test.html")
   } catch (e) {
-    console.log(`file error: ${e.message + '\n' + e.stack}`)
+    log(`file error: ${e.message + '\n' + e.stack}`)
   }
 }
