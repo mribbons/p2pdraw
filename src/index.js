@@ -19,7 +19,7 @@ const log = (...args) => {
     console.log(arg)    
     logElem && (logElem.innerText += out + '\n')
   }
-  
+
   document.scrollingElement.scrollTo(0, document.scrollingElement.scrollHeight)
 }
 
@@ -340,17 +340,22 @@ const connect = async() => {
 
 let server = undefined
 let twoway = undefined
+let client_address, client_port
 let server_port=30001
+let server_address = '192.168.1.77'
+let _client_address = '0.0.0.0'
 
 const netTestServer = async () => {
   log(`server listen...`)
   try {
-    server = new NetTest('127.0.0.1', server_port, log)
+    server = new NetTest(server_address, server_port, log)
     await server.listen((err) => {
       if (err) log(err)
       else log('server received connection')
     })
     server.socket.on('message', async (data, {port, address}) =>  {
+      client_address = address
+      client_port = port
       log(`server received ${data} from ${address}:${port}`)
       // server.send(`ack ${message}`)      
       let e = await server.send(`ack ${data}`, port, address, () => {
@@ -358,8 +363,6 @@ const netTestServer = async () => {
       })
       if (e) {
         log(`server send error: ${e.message + '\n' + e.stack}`)
-      } else {
-        log(`server send done`)
       }
     })
     // let err = await server.listen((message) => {
@@ -378,7 +381,7 @@ let client = undefined
 const netTestClient = async () => {
   log(`client connecting`);
   try {
-    client = new NetTest('127.0.0.1', 30001, log)
+    client = new NetTest(server_address, server_port, log)
     await client.connect((e) => {
       if (e) {
         log(`client connect failed: ${e.message + '\n' + e.stack}`)
@@ -386,9 +389,15 @@ const netTestClient = async () => {
         log(`client connected`)
         twoway = client
       }
+    }, async (data, {port, address}) =>  {
+      log(`client received2 ${data}`)
+      twoway = client
+      client.socket.on('message', async (data, {port, address}) =>  {
+        log(`client received ${data}`)
+      })
     })
 
-    client.socket.on('message', (data, {port, address}) =>  {
+    client.socket.on('message', async (data, {port, address}) =>  {
       log(`client received ${data}`)
     })
     // let err = await client.connect((message) => {
@@ -406,7 +415,12 @@ const netTestClient = async () => {
 
 const netTestClientSend = async () => {
   try {
-    let e = await twoway.send(`Hello it's ${new Date().toISOString()}`)
+    let e
+    if (client_address) {
+      e = await twoway.send('hello from server')
+    } else {
+      e = await twoway.send(`Hello it's ${new Date().toISOString()}`)
+    }
     if (e) {
       log(`client send error: ${e.message + '\n' + e.stack}`)
     } else {

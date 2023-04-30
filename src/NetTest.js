@@ -13,9 +13,12 @@ export default class NetTest {
     this.listening = true
   }
 
-  async connect(cb) {
-    this.socket = dgram.createSocket('udp4')
-    this.socket.connect(this.port, this.address, cb)
+  async connect(cb, messagecb) {
+    // this.socket = dgram.createSocket('udp4', cb)
+    this.socket = dgram.createSocket('udp4').bind(0, cb)
+    // let err = await this.socket.connect(this.port, this.address, messagecb)
+    // cb(err)
+
     //   (err) => {
     //   if (err) return err
 
@@ -25,7 +28,8 @@ export default class NetTest {
 
   async send(data, ...args) {
     try {
-    this.socket.send(data, ...args)
+      if (!this.listening) args = [this.port, this.address, ...args]
+      await this.socket.send(data, ...args)
     } catch (err) {
       return err
     }
