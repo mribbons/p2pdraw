@@ -341,35 +341,38 @@ const connect = async() => {
 let server = undefined
 let twoway = undefined
 let client_address, client_port
-let server_port=30001
-let server_address = '192.168.1.77'
+let server_port = 0
+let listen_address = '0.0.0.0'
 let _client_address = '0.0.0.0'
 
 const netTestServer = async () => {
+  if (!server_port) {
+    throw "Server port not set."
+  }
   log(`server listen...`)
   try {
-    server = new NetTest(server_address, server_port, log)
+    server = new NetTest('0.0.0.0', server_port, log)
     await server.listen((err) => {
-      if (err) log(err)
-      else log('server received connection')
+      if (err)  {
+        log(err)
+        log(`server listen failed, connecting as client.`)
+        netTestClient()
+        return
+      }
+      
+      else log('server listening.')
     })
     server.socket.on('message', async (data, {port, address}) =>  {
       client_address = address
       client_port = port
       log(`server received ${data} from ${address}:${port}`)
-      // server.send(`ack ${message}`)      
       let e = await server.send(`ack ${data}`, port, address, () => {
-        log(`server send done`)
+        // log(`server send done`)
       })
       if (e) {
         log(`server send error: ${e.message + '\n' + e.stack}`)
       }
     })
-    // let err = await server.listen((message) => {
-    //   log(`server received ${message}`)
-    //   server.send(`ack ${message}`)
-    // })    
-    log(`server listening`)
     twoway = server
   } catch (e) {
     log(`server error: ${e.message + '\n' + e.stack}`)
@@ -379,9 +382,12 @@ const netTestServer = async () => {
 let client = undefined
 
 const netTestClient = async () => {
-  log(`client connecting`);
+  if (!server_port) {
+    throw "Server port not set."
+  }
+  log(`client connecting to ${listen_address}:${server_port}`);
   try {
-    client = new NetTest(server_address, server_port, log)
+    client = new NetTest(listen_address, server_port, log)
     await client.connect((e) => {
       if (e) {
         log(`client connect failed: ${e.message + '\n' + e.stack}`)
@@ -400,14 +406,6 @@ const netTestClient = async () => {
     client.socket.on('message', async (data, {port, address}) =>  {
       log(`client received ${data}`)
     })
-    // let err = await client.connect((message) => {
-    //   log(`client received: ${message}`)
-    // })
-    // if (err) {
-    //   log(`client error: ${JSON.stringify(err)}`)
-    // } else {
-    //   log(`client connected`)
-    // }
   } catch (e) {
     log(`client error: ${e.message + '\n' + e.stack}`)
   }
@@ -424,7 +422,7 @@ const netTestClientSend = async () => {
     if (e) {
       log(`client send error: ${e.message + '\n' + e.stack}`)
     } else {
-      log(`client send done`)
+      // log(`client send done`)
     }
   } catch (e) {
     log(`client error: ${e.message + '\n' + e.stack}`)
@@ -447,11 +445,26 @@ const netTestClear = async () => {
 }
 const windowLoad = async () => {
   log(`window load`);
+
+  // log(`config: ` + JSON.stringify(window.__args.config, ' '))
   
   // setTimeout(androidFileWriteTest, 500)
   window.addEventListener("beforeunload", async () => {
     netTestClear()
   })
+
+  log(`reload host: ${process.env.RELOAD_HOST}`)
+  var hostParts = process.env.RELOAD_HOST.split(':')
+  listen_address = hostParts[0];
+  if (hostParts[1]) {
+    try {
+      server_port = parseInt(hostParts[1])    
+    } catch (err) {
+      log(`failed to parse port from: ${hostParts[1]}: ${err.message + '\n' + err.stack}`)
+    }
+  } else {
+    server_port = 9988
+  }
 }
 
 const androidFileWriteTest = async() => {

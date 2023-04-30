@@ -40,13 +40,13 @@ export default class NetTest {
       try {
         await this.socket.close()
       } catch (e) {
-        log(`server close failed: ${e.message + '\n' + e.stack}`)
+        this.log(`server close failed: ${e.message + '\n' + e.stack}`)
       }
       
       try {
         await this.socket.disconnect()
       } catch (e) {
-        log(`server disconnect failed: ${e.message + '\n' + e.stack}`)
+        this.log(`server disconnect failed: ${e.message + '\n' + e.stack}`)
       }
     } else {
       await this.socket.disconnect()
