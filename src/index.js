@@ -482,9 +482,15 @@ const try_catch = async (fn) => {
 const xfer_test = async () => {
   // let xfer = new Xfer(1234, Buffer.from(await fs.readFile(`${process.cwd}/../../../../src/index.html`)))
   // let buffer = await fs.readFile(`${process.cwd}/../../../../src/index.html`)
+  // should be able to do async read here
   let buffer = await fs.readFile(`c:\\Users\\mribb\\AppData\\Local\\Programs\\socketsupply\\src\\android\\webview.kt`)
-  // let xfer = await sendBuff(null, buffer, () => { }, () => { }, log)
-  sendBuff(null, buffer, () => { }, () => { }, { log })
+  let xfer = await sendBuff(null, buffer, () => { }, () => { }, { log, packetLength: 1300 })
+  let out = await recvBuff(xfer.statusList, null, () => { }, () => { }, { log })
+  fs.writeFile(`c:\\Users\\mribb\\AppData\\Local\\Programs\\socketsupply\\src\\android\\webview_recv.kt`, out)
+  // for (let x = 0; x < xfer.statusList.length; ++x) {
+  //   onReceivePacket()
+  // }
+  // sendBuff(null, buffer, () => { }, () => { }, { log })
   // log(`size: ${xfer._buffer.byteLength}`)
 }
 

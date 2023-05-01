@@ -15,7 +15,7 @@ export class Xfer {
   get id () { return this._id }
   _handle = null
   get dataSize() { return this._dataSize }
-  _packetSize = 1492;
+  _packetSize = packetLength;
   get packetSize() { return this._packetSize }
   get dataPacketCount() { return this._dataPacketCount }
   openStatus = null;
@@ -38,11 +38,10 @@ class PacketStatus {
  * @return {Xfer} `Xfer` reference that can be used for cancelling transfers
  */
 
-const headerSize = 0
-const dataSize = 1492 - headerSize
 
 let log = () => {}
 let hexDumpWidth = 160
+let packetLength = 1492
 
 /**
  * Convert a buffer to a hex dump string
@@ -98,8 +97,7 @@ export const stripBuffer = (packet) => {
   return out
 }
 
-export const recvBuff = async () => {}
-export const sendBuff = async (socket, buffer, progressCallback, completedCallback, opts) => {
+const parseOpts = (opts) => {
   if (opts) {
     if (opts.log)
     {
@@ -108,15 +106,60 @@ export const sendBuff = async (socket, buffer, progressCallback, completedCallba
     if (opts.hexDumpWidth) {
       hexDumpWidth = opts.hexDumpWidth
     }
+
+    if (opts.packetLength) {
+      packetLength = opts.packetLength
+    }
   }
-  let xfer = new Xfer(1234, buffer, 1492 - packetHeaderLength(sendDataPacketOps))
+
+  return opts
+}
+
+export const recvBuff = async (socket, buffer, progressCallback, completedCallback, opts) => {
+  opts = parseOpts(opts)
+  // make a new xfer
+
+  // how does callee init buffer without knowing length
+  // probably want to asynchronously init file, otherwise large file space reservation takes a long time, should be receiving stream during that time
+  // Fake stuff, not implemented properly yet
+  let statusList = socket;
+  let headerPacket = decodePacket(statusList[0][0])
+
+  let dataLength = packetLength - packetHeaderLength(sendDataPacketOps)
+  log(`receive send start: ${JSON.stringify(headerPacket)}, data length: ${dataLength})`)
+  var b = Buffer.allocUnsafe(headerPacket.totalSize)
+  for (let x = 1; x <= headerPacket.count; ++x) {
+    let dataPacket = decodePacket(statusList[x][0])
+    var testHash = hashBuffer(dataPacket.buffer, 0, dataPacket.buffer.byteLength)
+    log(`incoming data packet: ${JSON.stringify(stripBuffer(dataPacket))}: hash === ${testHash === dataPacket.hash}`)
+    // log(`incoming data: ${hexDump(dataPacket.buffer)}`)
+    dataPacket.buffer.copy(b, dataPacket.index * dataLength)
+    dataPacket.buffer.byteLength
+  }
+  return b
+}
+
+export const sendBuff = async (socket, buffer, progressCallback, completedCallback, opts) => {
+
+  // todo - handle resend
+  // resend packets if no response after a certain time
+  // have to use same packet, so client knows to ignore resends that have already arrived
+  // packets should be acked, either by entire hash for control packets, or data hash for data packets
+  // if packets not acked, resend existing packets, don't send new ones
+  // client should be able to ack multiple packets in a single packet
+
+  opts = parseOpts(opts);
+  let xfer = new Xfer(1234, buffer, packetLength - packetHeaderLength(sendDataPacketOps))
+
   log(`xfer packets: ${xfer.dataPacketCount}`)
   try {
     let { packet: startPacket, encoded } = buildSendStartPacket(xfer, buffer)
     log(`startPacket: ${JSON.stringify(startPacket)}`)
     log(`${hexDump(encoded)}`)
+    xfer.statusList.push([encoded,''])
     for (let x = 0; x < startPacket.count; x++) {
-      let { packet: dataPacket, encoded: encodedData } = buildSendDataPacket(xfer, buffer, x)
+      let { packet: dataPacket, encoded: encodedData } = await buildSendDataPacket(xfer, buffer, x)
+      xfer.statusList.push([encodedData,''])
       log(`dataPacket: ${JSON.stringify(stripBuffer(dataPacket))}`)
       log(`${hexDump(encodedData)}`)
     }
@@ -139,21 +182,15 @@ const u32 = 'u32'
 const u64 = 'u64'
 const BUFFER = 'BUFFER'
 
-/*
-u8:     [ (b, v) => b.writeUInt8(v)      , (b) => {return b.readUint8() }        ],
-  u32:    [ (b, v) => b.writeUInt32LE(v)   , (b) => {return b.readUint32LE() }     ],
-  u64:    [ (b, v) => b.writeBigUInt64LE(v), (b) => {return b.readBigUInt64LE() }  ],
-*/
-
 const bufferIOFuncs = {
-  u8:     [ (b, o) => { return b.readUInt8(o) }      , (b, o, v) => { return b.writeUint8(v, o) }                          ],
-  u32:    [ (b, o) => { return b.readUInt32LE(o) }   , (b, o, v) => { return b.writeUint32LE(v, o) }  ],
-  u64:    [ (b, o) => { return b.readBigUInt64LE(o) }, (b, o, v) => { return b.writeBigUInt64LE(BigInt(v), o) }],
-  BUFFER: [ (b, o, p, l) => {
+  u8:     [ (b, o) => { return b.readUInt8(o) }                 , (b, o, v) => { return b.writeUint8(v, o) }              ],
+  u32:    [ (b, o) => { return b.readUInt32LE(o) }              , (b, o, v) => { return b.writeUint32LE(v, o) }           ],
+  u64:    [ (b, o) => { return parseInt(b.readBigUInt64LE(o)) } , (b, o, v) => { return b.writeBigUInt64LE(BigInt(v), o) }],
+  BUFFER: [ (b, p, l) => {
               // copy from packet buffer to new buffer
               // TODO(@mribbons): This should write directly to the final buffer
-              b2.allocUnsafe(l)
-              b.copy(b2, o, p, p + l)
+              let b2 = Buffer.allocUnsafe(l)
+              b.copy(b2, 0, p, p + l)
               return b2
             },
             (b, o, v, p, l) => {
@@ -217,7 +254,7 @@ const packetHeaderLength = (packetOps) => {
   return len
 }
 
-const buildPacket = (packetOps, p) => {
+const encodePacket = (packetOps, p) => {
   // make this a rule
   if (packetOps[0][1] !== 'type') {
     throw `Packet Operation set doesn't start with type: ${JSON.stringify(packetOps)}`
@@ -245,17 +282,24 @@ const buildPacket = (packetOps, p) => {
 }
 
 const peekPacket = (buf) => {
-  return bufferIOFuncs[op[u8]](buf)
+  return bufferIOFuncs[u8][R](buf, 0)
 }
 
-const parsePacket = (buf) => {
+const decodePacket = (buf) => {
   let packetOps = packetTypeTable[peekPacket(buf)]
   if (!packetOps) {
     throw `Unhandled packet type: ${peekPacket(buf)}`
   }  
   let p = {}
+  let offset = 0
   for (let op of packetOps) {
-    p[op[PKT_FIELD]] = bufferIOFuncs[op[DATA_TYPE]](buf)
+    if (op[DATA_TYPE] === BUFFER) {      
+      p[op[PKT_FIELD]] = bufferIOFuncs[op[DATA_TYPE]][R](buf, offset, buf.byteLength - offset)
+      offset = buf.byteLength
+    } else {
+      p[op[PKT_FIELD]] = bufferIOFuncs[op[DATA_TYPE]][R](buf, offset)
+      offset += bufferLengths[op[DATA_TYPE]]
+    }
   }
   return p
 }
@@ -269,7 +313,11 @@ const buildSendStartPacket = (xfer, buffer) => {
     count: xfer.dataPacketCount
   }
 
-  return { packet: packet, encoded: buildPacket(sendStartPacketOps, packet) }
+  return { packet: packet, encoded: encodePacket(sendStartPacketOps, packet) }
+}
+
+const readSendStartPacket = (buffer) => {
+  return decodePacket(sendStartPacketOps, buffer) 
 }
 
 const buildSendDataPacket = (xfer, buffer, index) => {
@@ -286,7 +334,7 @@ const buildSendDataPacket = (xfer, buffer, index) => {
 
   packet.hash = hashBuffer(buffer, packet.position, packet.dataLength)
   log(`packet hash: ${packet.hash}`)
-  return { packet, encoded: buildPacket(sendDataPacketOps, packet) }
+  return { packet, encoded: encodePacket(sendDataPacketOps, packet) }
 }
 
 
