@@ -8,6 +8,7 @@ import Buffer from 'socket:buffer'
 import enableSocketReload from './socket-reload.js'
 import application from 'socket:application'
 import NetTest from './NetTest.js'
+import { reloadServer, reloadClient } from './reload-network.js'
 // import fs from 'socket:fs'
 
 import { Xfer, recvBuff, sendBuff } from './dgram_xfer.js'
@@ -484,14 +485,20 @@ const xfer_test = async () => {
   // let buffer = await fs.readFile(`${process.cwd}/../../../../src/index.html`)
   // should be able to do async read here
   let buffer = await fs.readFile(`c:\\Users\\mribb\\AppData\\Local\\Programs\\socketsupply\\src\\android\\webview.kt`)
-  let xfer = await sendBuff(null, buffer, () => { }, () => { }, { log, packetLength: 1300 })
-  let out = await recvBuff(xfer.statusList, null, () => { }, () => { }, { log })
-  fs.writeFile(`c:\\Users\\mribb\\AppData\\Local\\Programs\\socketsupply\\src\\android\\webview_recv.kt`, out)
+  // let xfer = await sendBuff(null, buffer, () => { }, () => { }, { log, packetLength: 1300 })
+  // let out = await recvBuff(xfer.statusList, null, () => { }, () => { }, { log })
+  // fs.writeFile(`c:\\Users\\mribb\\AppData\\Local\\Programs\\socketsupply\\src\\android\\webview_recv.kt`, out)
   // for (let x = 0; x < xfer.statusList.length; ++x) {
   //   onReceivePacket()
   // }
   // sendBuff(null, buffer, () => { }, () => { }, { log })
   // log(`size: ${xfer._buffer.byteLength}`)
+  // global server, client closed by netTestClear()
+  // these awaits are not reliable, we have no way of knowing if the client has subscribed to the server without an ack
+  server = await reloadServer(listen_address, server_port, { log, ackTimeout: 20 })
+  client = await reloadClient(listen_address, server_port, { log })
+  log(`server waiting`)
+  setTimeout(() => { server.sendBuffer(buffer) }, 500);
 }
 
 const androidFileWriteTest = async() => {

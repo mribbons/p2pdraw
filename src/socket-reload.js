@@ -10,6 +10,7 @@ v2.1:
 
 Todo:
   Only works on desktop, there needs to be a way to tell mobile apps to update, and they should also pull assets from an http server
+  Fix setInterval() doesn't get set up if other code crashes
 
 usage:
 

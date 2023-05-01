@@ -97,6 +97,9 @@ export const stripBuffer = (packet) => {
   return out
 }
 
+// todo, tune
+let ackTimeout = 1000
+
 const parseOpts = (opts) => {
   if (opts) {
     if (opts.log)
@@ -109,6 +112,10 @@ const parseOpts = (opts) => {
 
     if (opts.packetLength) {
       packetLength = opts.packetLength
+    }
+
+    if (opts.ackTimeout) {
+      ackTimeout = opts.ackTimeout
     }
   }
 
@@ -139,7 +146,7 @@ export const recvBuff = async (socket, buffer, progressCallback, completedCallba
   return b
 }
 
-export const sendBuff = async (socket, buffer, progressCallback, completedCallback, opts) => {
+export const sendBuff = async (socket, address, port, buffer, progressCallback, completedCallback, opts) => {
 
   // todo - handle resend
   // resend packets if no response after a certain time
@@ -150,28 +157,69 @@ export const sendBuff = async (socket, buffer, progressCallback, completedCallba
 
   opts = parseOpts(opts);
   let xfer = new Xfer(1234, buffer, packetLength - packetHeaderLength(sendDataPacketOps))
+  xfer.address = address
+  xfer.port = port
+  xfer.progressCallback = progressCallback
+  xfer.completedCallback = completedCallback
+  xfer.ackTimeout = ackTimeout
+  xfer.socket = socket
 
   log(`xfer packets: ${xfer.dataPacketCount}`)
   try {
     let { packet: startPacket, encoded } = buildSendStartPacket(xfer, buffer)
     log(`startPacket: ${JSON.stringify(startPacket)}`)
     log(`${hexDump(encoded)}`)
-    xfer.statusList.push([encoded,''])
-    for (let x = 0; x < startPacket.count; x++) {
-      let { packet: dataPacket, encoded: encodedData } = await buildSendDataPacket(xfer, buffer, x)
-      xfer.statusList.push([encodedData,''])
-      log(`dataPacket: ${JSON.stringify(stripBuffer(dataPacket))}`)
-      log(`${hexDump(encodedData)}`)
-    }
+    xfer.statusList.push([encoded, startPacket, hashBuffer(encoded), new Date().getTime()])
+    xfer.socket.send(encoded, xfer.port, xfer.address)
+    // send first round of data packets before adding start packet to status list, otherwise ack check will be performed
+    await sendLoop(buffer, xfer)
   } catch (e) {
     log(e.message + '\n' + e.stack)
   }
 
+  xfer._handle = setTimeout( () => sendLoop(buffer, xfer), 1050 );
+
   return xfer
 }
 
-const PACKET_TYPE_SEND_START = 1
-const PACKET_TYPE_DATA = 2
+const sendLoop = async (buffer, xfer) => {
+  let now = new Date().getTime()
+  // let remove = []
+  xfer.statusList.forEach((status, i) => {
+    let [encoded, packet, hash, ts] = status
+    if (now - ts > xfer.ackTimeout) {
+      log(`waiting for ack: ${packet.type} ${hash}, ${now - ts}`)
+      xfer.socket.send(encoded, xfer.port, xfer.address)
+      status[3] = now
+    } else {
+      // don't remove until ackd
+      // remove.push(i)
+    }
+  })
+
+  // for (let x = remove.length-1; x > -1; x--) {
+  //   xfer.statusList.splice(remove[x], 1)
+  // }
+  
+  for (let x = 0; x < xfer.dataPacketCount; x++) {
+    let status
+    if (xfer.statusList.length < 3) {
+      let { packet: dataPacket, encoded: encodedData } = await buildSendDataPacket(xfer, buffer, x)
+      log(`dataPacket: ${JSON.stringify(stripBuffer(dataPacket))}`)
+      // log(`${hexDump(encodedData)}`)
+      status = [encodedData, dataPacket, dataPacket.hash, new Date().getTime()]
+      xfer.socket.send(encodedData, xfer.port, xfer.address)
+      xfer.statusList.push(status)
+    } else {
+      break;
+    }
+  }
+
+  // settimeout
+}
+
+export const PACKET_TYPE_SEND_START = 1
+export const PACKET_TYPE_DATA = 2
 
 // each packet type is defined as a table of function pointers that can be used for r/w, this ensures consistency
 const R = 0
@@ -274,7 +322,7 @@ const encodePacket = (packetOps, p) => {
   return buf
 }
 
-const peekPacket = (buf) => {
+export const peekPacket = (buf) => {
   return bufferIOFuncs[u8][R](buf, 0)
 }
 
