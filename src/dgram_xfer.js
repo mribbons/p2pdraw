@@ -212,25 +212,18 @@ const bufferLengths = {
 const DATA_TYPE = 0
 // 1: packet field
 const PKT_FIELD = 1
-// Todo, delete:
-// 3: read function (read packet from wire)
-// 4: write function (build packet for wire)
-// arguments:
-// x: Xfer
-// p: packet
-// v: value
 
 const sendStartPacketOps = [
   // control type - transmit start
-  [ u8,   'type',       (x, p, v) => p.type = v, (x, p, v) => { return p.type } ],
+  [ u8,   'type'      ],
   // sequence
-  [ u8,   'seq',        (x, p, v) => p.seq = v, (x, p, v) => { return p.seq } ],
+  [ u8,   'seq'       ],
   // xfer id
-  [ u64,  'id' ],
+  [ u64,  'id'        ],
   // 4  - total size
-  [ u64,  'totalSize',  (x, p, v) => {  p.totalSize  }, (x, p, v) => { return p.totalSize } ],
+  [ u64,  'totalSize' ],
   // 4  - packet count
-  [ u64,   'count',     (x, p, v) => { p.count }, (x, p, v) => { return p.count } ]
+  [ u64,   'count'    ]
   // - packet size is derived (last packet calculated by total size % packet count)
 ]
 
