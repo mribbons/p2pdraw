@@ -10,6 +10,8 @@ import application from 'socket:application'
 import NetTest from './NetTest.js'
 // import fs from 'socket:fs'
 
+import { Xfer, recvBuff, sendBuff } from './dgram_xfer.js'
+
 let logElem = document.getElementById('logPre')
 
 const log = (...args) => {
@@ -465,6 +467,25 @@ const windowLoad = async () => {
   } else {
     server_port = 9988
   }
+
+  try_catch(xfer_test)
+}
+
+const try_catch = async (fn) => {
+  try {
+    await fn()
+  } catch (e) {
+    log(e.message + '\n' + e.stack)
+  }
+}
+
+const xfer_test = async () => {
+  // let xfer = new Xfer(1234, Buffer.from(await fs.readFile(`${process.cwd}/../../../../src/index.html`)))
+  // let buffer = await fs.readFile(`${process.cwd}/../../../../src/index.html`)
+  let buffer = await fs.readFile(`c:\\Users\\mribb\\AppData\\Local\\Programs\\socketsupply\\src\\android\\webview.kt`)
+  // let xfer = await sendBuff(null, buffer, () => { }, () => { }, log)
+  sendBuff(null, buffer, () => { }, () => { }, { log })
+  // log(`size: ${xfer._buffer.byteLength}`)
 }
 
 const androidFileWriteTest = async() => {
