@@ -8,6 +8,7 @@ export class Xfer {
     this._buffer = buffer;
     this._dataSize = dataSize
     this._dataPacketCount = Math.ceil(buffer.byteLength / dataSize)
+    this.packetIndex = -1
   }
   _currSeq = 0;
   get nextSeq () { return this._currSeq++ }
@@ -20,6 +21,7 @@ export class Xfer {
   get dataPacketCount() { return this._dataPacketCount }
   openStatus = null;
   statusList = []
+  doneList = []
   get handle() { return this._handle }
 }
 
@@ -189,7 +191,7 @@ export const recvPacket = (buffer, xfer, packetBuf, packetType) => {
       // todo(@mribbons): check if packet already in status list
       // should always just ack back already received packets in case server didn't receive previous ack
       dataPacket.buffer.copy(buffer, dataPacket.index * xfer.dataSize)
-      xfer.statusList.push([packetBuf, dataPacket, testHash, new Date().getTime()])    
+      xfer.statusList.push([packetBuf, dataPacket, testHash, new Date().getTime()])
     }
 
     return true
@@ -206,6 +208,15 @@ export const ackLoop = (xfer) => {
   let { encoded } = buildAckPacket(xfer, statuses[0][1].id, statuses)
   log(`ack loop: \n${hexDump(encoded)}`)
   xfer.socket.send(encoded, xfer.port, xfer.address)
+
+  // todo(@mribbons) - Store list of comleted packets on disk, for performance and resume
+  // todo(@mribbons) - This doesn't account for duplicate received packets
+  xfer.doneList.push(...statuses)
+  if (xfer.doneList.length >= xfer.dataPacketCount) {
+    log(`${xfer.tag} transfer completed`)
+  } else {
+    log(`${xfer.tag} not done: ${xfer.doneList.length}, ${xfer.dataPacketCount}`)
+  }
 }
 
 export const sendBuff = async (xferId, socket, address, port, buffer, progressCallback, completedCallback, opts) => {
@@ -246,7 +257,6 @@ export const sendBuff = async (xferId, socket, address, port, buffer, progressCa
 
 const sendLoop = async (buffer, xfer) => {
   let now = new Date().getTime()
-  // let remove = []
   xfer.statusList.forEach((status) => {
     let [encoded, packet, hash, ts] = status
     if (now - ts > xfer.ackTimeout) {
@@ -256,7 +266,8 @@ const sendLoop = async (buffer, xfer) => {
     }
   })
   
-  for (let x = 0; x < xfer.dataPacketCount; x++) {
+  // not sure if sequential packet method is that great, might be ok with bigger status length
+  for (let x = Math.max(xfer.packetIndex, 0); x < xfer.dataPacketCount; x++) {
     let status
     if (xfer.statusList.length < 3) {
       let { packet: dataPacket, encoded: encodedData } = await buildSendDataPacket(xfer, buffer, x)
@@ -265,12 +276,17 @@ const sendLoop = async (buffer, xfer) => {
       status = [encodedData, dataPacket, dataPacket.hash, new Date().getTime()]
       xfer.socket.send(encodedData, xfer.port, xfer.address)
       xfer.statusList.push(status)
+      xfer.packetIndex = dataPacket.index + 1
     } else {
       break;
     }
   }
 
-  // settimeout
+  if (xfer.packetIndex < xfer.dataPacketCount) {
+    xfer._handle = setTimeout( () => sendLoop(buffer, xfer), 1050 );
+  } else {
+    log(`${xfer.tag} transfer completed`)
+  }
 }
 
 export const PACKET_TYPE_SEND_START = 1
