@@ -88,10 +88,12 @@ export const hexDump = (buf, width) => {
 export const stripBuffer = (packet) => {
   let out = {}
   Object.keys(packet).forEach(k => {
-    if (k != `buffer`) {
-      out[k] = packet[k]
-    } else {
+    if (k == `buffer`) {
       out[k] = `[ /* stripped */ ]`
+    } else if (typeof packet[k] === 'bigint') {
+      out[k] = packet[k].toString()
+    } else {
+      out[k] = packet[k]
     }
   })
   return out
@@ -122,31 +124,83 @@ const parseOpts = (opts) => {
   return opts
 }
 
-export const recvBuff = async (socket, buffer, progressCallback, completedCallback, opts) => {
+export const recvBuff = async (xferId, socket, encodedStartPacket, address, port, progressCallback, completedCallback, opts) => {
   opts = parseOpts(opts)
-  // make a new xfer
 
   // how does callee init buffer without knowing length
   // probably want to asynchronously init file, otherwise large file space reservation takes a long time, should be receiving stream during that time
   // Fake stuff, not implemented properly yet
-  let statusList = socket;
-  let headerPacket = decodePacket(statusList[0][0])
+  // let statusList = socket;
+  // let headerPacket = decodePacket(statusList[0][0])
 
-  let dataLength = packetLength - packetHeaderLength(sendDataPacketOps)
-  log(`receive send start: ${JSON.stringify(headerPacket)}, data length: ${dataLength})`)
-  var b = Buffer.allocUnsafe(headerPacket.totalSize)
-  for (let x = 1; x <= headerPacket.count; ++x) {
-    let dataPacket = decodePacket(statusList[x][0])
-    var testHash = hashBuffer(dataPacket.buffer, 0, dataPacket.buffer.byteLength)
-    log(`incoming data packet: ${JSON.stringify(stripBuffer(dataPacket))}: hash === ${testHash === dataPacket.hash}`)
-    // log(`incoming data: ${hexDump(dataPacket.buffer)}`)
-    dataPacket.buffer.copy(b, dataPacket.index * dataLength)
-    dataPacket.buffer.byteLength
-  }
-  return b
+  let startPacket = decodePacket(encodedStartPacket)
+  // TODO(@mribbons): Buffer.allocUnsafe doesn't accept BigInt
+  let buffer = Buffer.allocUnsafe(parseInt(startPacket.totalSize))
+
+  let xfer = new Xfer(xferId, buffer, packetLength - packetHeaderLength(sendDataPacketOps))
+  xfer.address = address
+  xfer.port = port
+  xfer.progressCallback = progressCallback
+  xfer.completedCallback = completedCallback
+  xfer.ackTimeout = ackTimeout
+  xfer.socket = socket
+  xfer.statusList = [[encodedStartPacket, startPacket, hashBuffer(encodedStartPacket, 0, encodedStartPacket.byteLength), new Date().getTime()]]
+
+  xfer._handle = setInterval(() => {
+    ackLoop(xfer)
+  }, 1000);
+
+  return [xfer, buffer]
 }
 
-export const sendBuff = async (socket, address, port, buffer, progressCallback, completedCallback, opts) => {
+export const recvPacket = (buffer, xfer, packetBuf, packetType) => {
+  if (!packetType) {
+    packetType = peekPacket(packetBuf)
+  }
+
+  if (packetType === PACKET_TYPE_SEND_START) {
+    // should try to ack start packets in case server didn't receive ack
+    return false
+  }
+
+  let dataPacket = decodePacket(packetBuf)
+  log(`recv packet: ${JSON.stringify(stripBuffer(dataPacket))}`)
+
+  if (packetType === PACKET_TYPE_ACK) {
+    for (let offset = 0; offset < dataPacket.buffer.byteLength; offset += bufferLengths[u32]) {
+      let hash = bufferIOFuncs[u32][R](dataPacket.buffer, offset)
+      let x = xfer.statusList.findIndex(status => status[2] === hash )
+      if (x > -1) {
+        // receiver is acking this hash, remove it
+        log(`client acked: ${hash}`)
+        xfer.statusList.splice(x, 1)
+      } else {
+        log(`unknown hash being acked: ${hash}, ${JSON.stringify(stripBuffer(dataPacket))}`)
+      }
+    }
+  }
+
+  var testHash = hashBuffer(dataPacket.buffer, 0, dataPacket.buffer.byteLength)
+  log(`incoming data packet: ${JSON.stringify(stripBuffer(dataPacket))}: hash === ${testHash === dataPacket.hash}`)
+  if (testHash === dataPacket.hash) {
+    dataPacket.buffer.copy(buffer, dataPacket.index * xfer.dataSize)
+    xfer.statusList.push([packetBuf, dataPacket, testHash, new Date().getTime()])    
+  }
+
+  return true
+}
+
+export const ackLoop = (xfer) => {
+  if (xfer.statusList.length === 0) {
+    return
+  }
+  let statuses = xfer.statusList.splice(0, xfer.statusList.length)
+  let { encoded } = buildAckPacket(xfer, statuses[0][1].id, statuses)
+  log(`ack loop: \n${hexDump(encoded)}`)
+  xfer.socket.send(encoded, xfer.port, xfer.address)
+}
+
+export const sendBuff = async (xferId, socket, address, port, buffer, progressCallback, completedCallback, opts) => {
 
   // todo - handle resend
   // resend packets if no response after a certain time
@@ -156,7 +210,7 @@ export const sendBuff = async (socket, address, port, buffer, progressCallback, 
   // client should be able to ack multiple packets in a single packet
 
   opts = parseOpts(opts);
-  let xfer = new Xfer(1234, buffer, packetLength - packetHeaderLength(sendDataPacketOps))
+  let xfer = new Xfer(xferId, buffer, packetLength - packetHeaderLength(sendDataPacketOps))
   xfer.address = address
   xfer.port = port
   xfer.progressCallback = progressCallback
@@ -167,9 +221,9 @@ export const sendBuff = async (socket, address, port, buffer, progressCallback, 
   log(`xfer packets: ${xfer.dataPacketCount}`)
   try {
     let { packet: startPacket, encoded } = buildSendStartPacket(xfer, buffer)
-    log(`startPacket: ${JSON.stringify(startPacket)}`)
+    log(`startPacket: ${JSON.stringify(stripBuffer(startPacket))}`)
     log(`${hexDump(encoded)}`)
-    xfer.statusList.push([encoded, startPacket, hashBuffer(encoded), new Date().getTime()])
+    xfer.statusList.push([encoded, startPacket, hashBuffer(encoded, 0, encoded.byteLength), new Date().getTime()])
     xfer.socket.send(encoded, xfer.port, xfer.address)
     // send first round of data packets before adding start packet to status list, otherwise ack check will be performed
     await sendLoop(buffer, xfer)
@@ -185,21 +239,14 @@ export const sendBuff = async (socket, address, port, buffer, progressCallback, 
 const sendLoop = async (buffer, xfer) => {
   let now = new Date().getTime()
   // let remove = []
-  xfer.statusList.forEach((status, i) => {
+  xfer.statusList.forEach((status) => {
     let [encoded, packet, hash, ts] = status
     if (now - ts > xfer.ackTimeout) {
       log(`waiting for ack: ${packet.type} ${hash}, ${now - ts}`)
       xfer.socket.send(encoded, xfer.port, xfer.address)
       status[3] = now
-    } else {
-      // don't remove until ackd
-      // remove.push(i)
     }
   })
-
-  // for (let x = remove.length-1; x > -1; x--) {
-  //   xfer.statusList.splice(remove[x], 1)
-  // }
   
   for (let x = 0; x < xfer.dataPacketCount; x++) {
     let status
@@ -219,7 +266,8 @@ const sendLoop = async (buffer, xfer) => {
 }
 
 export const PACKET_TYPE_SEND_START = 1
-export const PACKET_TYPE_DATA = 2
+export const PACKET_TYPE_ACK = 2
+export const PACKET_TYPE_DATA = 3
 
 // each packet type is defined as a table of function pointers that can be used for r/w, this ensures consistency
 const R = 0
@@ -233,7 +281,7 @@ const BUFFER = 'BUFFER'
 const bufferIOFuncs = {
   u8:     [ (b, o) => { return b.readUInt8(o) }                 , (b, o, v) => { return b.writeUint8(v, o) }              ],
   u32:    [ (b, o) => { return b.readUInt32LE(o) }              , (b, o, v) => { return b.writeUint32LE(v, o) }           ],
-  u64:    [ (b, o) => { return parseInt(b.readBigUInt64LE(o)) } , (b, o, v) => { return b.writeBigUInt64LE(BigInt(v), o) }],
+  u64:    [ (b, o) => { return (b.readBigUInt64LE(o)) } , (b, o, v) => { return b.writeBigUInt64LE(BigInt(v), o) }],
   BUFFER: [ (b, p, l) => {
               // copy from packet buffer to new buffer
               // TODO(@mribbons): This should write directly to the final buffer
@@ -261,30 +309,41 @@ const DATA_TYPE = 0
 // 1: packet field
 const PKT_FIELD = 1
 
+// TODO(mribbons): Buffer doesn't support 2gb+, size related types have been changed to u32 instead of u64
 const sendStartPacketOps = [
   // control type - transmit start
   [ u8,   'type'      ],
-  // sequence
-  [ u8,   'seq'       ],
   // xfer id
   [ u64,  'id'        ],
+  // sequence
+  [ u8,   'seq'       ],
   // 4  - total size
-  [ u64,  'totalSize' ],
+  [ u32,  'totalSize' ],
   // 4  - packet count
-  [ u64,   'count'    ]
+  [ u32,   'count'    ]
   // - packet size is derived (last packet calculated by total size % packet count)
+]
+
+const ackPacketOps = [
+  [ u8,     'type'    ],
+  // random packet id
+  [ u64,    'id'      ],
+  // list of u32 hashes for packets being ack'd
+  [ BUFFER,  'buffer' ]
 ]
 
 const sendDataPacketOps = [
   [ u8,     'type'    ],
+  // xfer id
   [ u64,    'id'      ],
-  [ u64,    'index'   ],
+  [ u32,    'index'   ],
   [ u32,    'hash'    ],
   [ BUFFER, 'buffer'  ]
 ]
 
 const packetTypeTable = []
 packetTypeTable[PACKET_TYPE_SEND_START] = sendStartPacketOps
+packetTypeTable[PACKET_TYPE_ACK]        = ackPacketOps
 packetTypeTable[PACKET_TYPE_DATA]       = sendDataPacketOps
 
 const packetHeaderLength = (packetOps) => {
@@ -297,8 +356,19 @@ const packetHeaderLength = (packetOps) => {
 
 const encodePacket = (packetOps, p) => {
   // make this a rule
-  if (packetOps[0][1] !== 'type') {
-    throw `Packet Operation set doesn't start with type: ${JSON.stringify(packetOps)}`
+  if (packetOps[0][1] !== 'type' || packetOps[0][0] != u8) {
+    throw `Packet Operation set doesn't start with type/u8: ${JSON.stringify(packetOps)}`
+  }
+
+  if (packetOps[1][1] !== 'id' || packetOps[1][0] != u64) {
+    throw `Packet Operation field 2 not id/u64: ${JSON.stringify(packetOps)}`
+  }
+
+  if (p.buffer && p.dataLength === undefined) {
+    throw `packet.dataLength must be specified when encoding a buffer`
+  }
+  if (p.buffer && p.position === undefined) {
+    throw `packet.position must be specified when encoding a buffer`
   }
   let buf = Buffer.allocUnsafe(packetHeaderLength(packetOps) + (p.dataLength !== undefined ? p.dataLength : 0))
   log(`build packet size: ${buf.byteLength}`)
@@ -323,7 +393,23 @@ const encodePacket = (packetOps, p) => {
 }
 
 export const peekPacket = (buf) => {
-  return bufferIOFuncs[u8][R](buf, 0)
+  if (buf.byteLength < bufferLengths[u8])
+    return
+
+  let t = bufferIOFuncs[u8][R](buf, 0)
+
+  if (t < 1 || t > packetTypeTable.length)
+    return
+
+  return t
+}
+
+const typeWithIdSize = bufferLengths[u8] + bufferLengths[u64]
+export const peekPacketId = (buf) => {
+  if (buf.byteLength < typeWithIdSize)
+    return
+    
+  return bufferIOFuncs[u64][R](buf, bufferLengths[u8])
 }
 
 const decodePacket = (buf) => {
@@ -361,6 +447,25 @@ const readSendStartPacket = (buffer) => {
   return decodePacket(sendStartPacketOps, buffer) 
 }
 
+const buildAckPacket = (xfer, server_xfer_id, statusList) => {
+  var packet = {
+    type: PACKET_TYPE_ACK,
+    id: server_xfer_id,
+    position: 0,
+    dataLength: statusList.length * bufferLengths[u32],
+    buffer: Buffer.allocUnsafe(statusList.length * bufferLengths[u32])
+  }
+
+  statusList.forEach((status, i) => {
+    
+    let hash = status[2]
+    log(`buildAckPacket: ${JSON.stringify(stripBuffer(status[1]))}, ${hash}`)
+    bufferIOFuncs[u32][W](packet.buffer, i * bufferLengths[u32], hash)
+  })
+
+  return { packet, encoded: encodePacket(ackPacketOps, packet) }
+}
+
 const buildSendDataPacket = (xfer, buffer, index) => {
   var packet = {
     type: PACKET_TYPE_DATA,
@@ -376,6 +481,16 @@ const buildSendDataPacket = (xfer, buffer, index) => {
   packet.hash = hashBuffer(buffer, packet.position, packet.dataLength)
   log(`packet hash: ${packet.hash}`)
   return { packet, encoded: encodePacket(sendDataPacketOps, packet) }
+}
+
+export const processConformantPacket = async (data, {port, address}, f) => {
+  let id, type
+  type = peekPacket(data)
+  if (type === undefined) return false
+  id = peekPacketId(data)
+  if (id === undefined) return false
+
+  return f(data, {port, address}, type, id)
 }
 
 

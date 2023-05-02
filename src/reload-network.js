@@ -1,6 +1,7 @@
 import dgram from 'socket:dgram'
 import Buffer from 'socket:buffer'
-import { Xfer, recvBuff, sendBuff, PACKET_TYPE_SEND_START, peekPacket } from './dgram_xfer.js'
+import { getRandomValues } from 'socket:crypto'
+import { recvBuff, sendBuff, PACKET_TYPE_SEND_START, PACKET_TYPE_DATA, recvPacket, processConformantPacket } from './dgram_xfer.js'
 
 export const reloadServer = async (address, port, opts) => {
   return new Promise((resolve, reject) => {
@@ -34,7 +35,22 @@ class DgramConnection {
     this.log = opts.log || this.log
     this.type = opts.type || 'udp4'
     this.clients = {}
-    this.transfers = []
+    this.xfers = {}
+    this.xferBufs = []
+    this.ids = {}
+    this.serverIds = {}
+  }
+
+  uniqRand64 = () => {
+    let tmp = new BigUint64Array(1)
+    getRandomValues(tmp)
+    while (true) {
+      let id = tmp[0]
+      if (this.ids[id] === undefined) {
+        this.ids[id] = null
+        return id
+      }
+    }
   }
 
   async listen(cb) {
@@ -54,6 +70,13 @@ class DgramConnection {
 
   async serverMesssage (data, {port, address}) {
     await this.addClient(data, {port, address})
+
+    processConformantPacket(data, {port, address}, (data, {port, address}, packetType, xfer_id) => {
+      if (this.xfers[xfer_id] === undefined)
+        return
+
+      recvPacket(this.xferBufs[xfer_id], this.xfers[xfer_id], data)
+    })
   }
 
   async sendBuffer(buffer, clients) {
@@ -62,17 +85,42 @@ class DgramConnection {
     this.log(`sending buffer to ${JSON.stringify(this.clients)}`)
 
     Object.keys(clients).forEach((clientKey) => {
-      sendBuff(this.socket, clients[clientKey].address, this.clients[clientKey].port, buffer, null, null, { log: this.log })
-        .then(xfer => this.transfers.push(xfer))
+      sendBuff(this.uniqRand64(), this.socket, clients[clientKey].address, this.clients[clientKey].port, buffer, null, null, { log: this.log })
+        .then((xfer) => { 
+          xfer.tag = 'server'
+          this.xfers[xfer.id] = xfer
+          this.xferBufs[xfer.id] = buffer
+        })
     })
   }
 
-  async clientMessage(data, {port, address}) {
-    // await this.addClient(data, {port, address})
+  async clientMessage (data, {port, address}) {
+    await this.addClient(data, {port, address})
 
-    if (peekPacket(data) === PACKET_TYPE_SEND_START) {
-      this.log(`server initiating connection`)
-    }
+    processConformantPacket(data, {port, address}, async (data, {port, address}, packetType, xfer_id) => {
+      if (packetType === PACKET_TYPE_SEND_START) {
+        if (this.serverIds[xfer_id] !== undefined) {
+          this.log(`server already tried to intiate, ignoring`)
+          return
+        }
+
+        this.serverIds[xfer_id] = null
+        this.log(`server initiating connection`)
+        let [ xfer, buf ] = await recvBuff(this.uniqRand64(), this.socket, data, address, port, null, null, { log: this.log })
+        xfer.tag = 'client'
+        this.xfers[xfer.id] = xfer
+        this.xferBufs[xfer.id] = buf
+        // server -> client id lookup
+        this.serverIds[xfer_id] = xfer.id
+      } else if (packetType === PACKET_TYPE_DATA) {
+        // todo(mribbons): check xfer id, address, port match
+        if (this.xfers[this.serverIds[xfer_id]] !== undefined) {
+          let xfer = this.xfers[this.serverIds[xfer_id]]
+          let buffer = this.xferBufs[this.serverIds[xfer_id]]
+          recvPacket(buffer, xfer, data)
+        }
+      }
+    })
   }
 
   async addClient(message, {port, address}) {
