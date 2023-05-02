@@ -179,16 +179,23 @@ export const recvPacket = (buffer, xfer, packetBuf, packetType) => {
         log(`unknown hash being acked: ${hash}, ${JSON.stringify(stripBuffer(dataPacket))}`)
       }
     }
+    return true
   }
 
-  var testHash = hashBuffer(dataPacket.buffer, 0, dataPacket.buffer.byteLength)
-  log(`incoming data packet: ${JSON.stringify(stripBuffer(dataPacket))}: hash === ${testHash === dataPacket.hash}`)
-  if (testHash === dataPacket.hash) {
-    dataPacket.buffer.copy(buffer, dataPacket.index * xfer.dataSize)
-    xfer.statusList.push([packetBuf, dataPacket, testHash, new Date().getTime()])    
+  if (packetType === PACKET_TYPE_DATA) {
+    var testHash = hashBuffer(dataPacket.buffer, 0, dataPacket.buffer.byteLength)
+    log(`${xfer.tag}: incoming data packet: ${JSON.stringify(stripBuffer(dataPacket))}: hash === ${testHash === dataPacket.hash}`)
+    if (testHash === dataPacket.hash) {
+      // todo(@mribbons): check if packet already in status list
+      // should always just ack back already received packets in case server didn't receive previous ack
+      dataPacket.buffer.copy(buffer, dataPacket.index * xfer.dataSize)
+      xfer.statusList.push([packetBuf, dataPacket, testHash, new Date().getTime()])    
+    }
+
+    return true
   }
 
-  return true
+  return false
 }
 
 export const ackLoop = (xfer) => {
