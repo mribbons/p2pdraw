@@ -175,6 +175,7 @@ export const recvPacket = (buffer, xfer, packetBuf, packetType) => {
         log(`client acked: ${hash}`)
         xfer.statusList.splice(x, 1)
       } else {
+        // this just means packet has already been ackd
         log(`unknown hash being acked: ${hash}, ${JSON.stringify(stripBuffer(dataPacket))}`)
       }
     }
@@ -314,7 +315,7 @@ const sendStartPacketOps = [
   // control type - transmit start
   [ u8,   'type'      ],
   // xfer id
-  [ u64,  'id'        ],
+  [ u32,  'id'        ],
   // sequence
   [ u8,   'seq'       ],
   // 4  - total size
@@ -327,7 +328,7 @@ const sendStartPacketOps = [
 const ackPacketOps = [
   [ u8,     'type'    ],
   // random packet id
-  [ u64,    'id'      ],
+  [ u32,    'id'      ],
   // list of u32 hashes for packets being ack'd
   [ BUFFER,  'buffer' ]
 ]
@@ -335,7 +336,7 @@ const ackPacketOps = [
 const sendDataPacketOps = [
   [ u8,     'type'    ],
   // xfer id
-  [ u64,    'id'      ],
+  [ u32,    'id'      ],
   [ u32,    'index'   ],
   [ u32,    'hash'    ],
   [ BUFFER, 'buffer'  ]
@@ -360,8 +361,8 @@ const encodePacket = (packetOps, p) => {
     throw `Packet Operation set doesn't start with type/u8: ${JSON.stringify(packetOps)}`
   }
 
-  if (packetOps[1][1] !== 'id' || packetOps[1][0] != u64) {
-    throw `Packet Operation field 2 not id/u64: ${JSON.stringify(packetOps)}`
+  if (packetOps[1][1] !== 'id' || packetOps[1][0] != u32) {
+    throw `Packet Operation field 2 not id/u32: ${JSON.stringify(packetOps)}`
   }
 
   if (p.buffer && p.dataLength === undefined) {
@@ -404,12 +405,12 @@ export const peekPacket = (buf) => {
   return t
 }
 
-const typeWithIdSize = bufferLengths[u8] + bufferLengths[u64]
+const typeWithIdSize = bufferLengths[u8] + bufferLengths[u32]
 export const peekPacketId = (buf) => {
   if (buf.byteLength < typeWithIdSize)
     return
     
-  return bufferIOFuncs[u64][R](buf, bufferLengths[u8])
+  return bufferIOFuncs[u32][R](buf, bufferLengths[u8])
 }
 
 const decodePacket = (buf) => {
