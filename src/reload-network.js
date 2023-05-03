@@ -64,6 +64,10 @@ class DgramConnection {
       this.serverMesssage(data, {port, address}) }
     )
     this.listening = true
+
+    this.pingLoopHandle = setInterval(() => {
+      this.pingLoop()
+    }, 1000)
   }
 
   async connect(cb) {
@@ -87,9 +91,8 @@ class DgramConnection {
   async sendBuffer(buffer, client) {
     this.log(`sending buffer to ${JSON.stringify(client)}`)
 
-    sendBuff(this.uniqRand32(), this.socket, client.address, client.port, buffer, null, (xfer) => {this.recvDone(xfer)}, { /*log: this.log*/ packetLength: this.opts.packetLength })
-      .then((xfer) => { 
-        xfer.tag = 'server'
+    sendBuff(this.uniqRand32(), this.socket, client.address, client.port, buffer, null, (xfer) => {this.recvDone(xfer)}, { /*log: this.log, */ packetLength: this.opts.packetLength })
+      .then((xfer) => {
         this.xfers[xfer.id] = xfer
         this.xferBufs[xfer.id] = buffer
       })
@@ -108,7 +111,6 @@ class DgramConnection {
         this.serverIds[xfer_id] = null
         this.log(`server initiating connection`)
         let [ xfer, buf ] = await recvBuff(this.uniqRand32(), this.socket, data, address, port, (xfer) => {this.recvProgress(xfer)}, (xfer) => {this.recvDone(xfer)}, { /*log: this.log*/ packetLength: this.opts.packetLength })
-        xfer.tag = 'client'
         this.xfers[xfer.id] = xfer
         this.xferBufs[xfer.id] = buf
         // server -> client id lookup
@@ -131,15 +133,21 @@ class DgramConnection {
   async pingLoop() {
     Object.keys(this.xfers).forEach(key => {
       let xfer = this.xfers[key]
-      this.rate = 0
+      if (xfer.xferedBytes < this.xferBufs[key].byteLength)
+        this.logProcess(xfer)
+    })
+  }
+
+  logProcess(xfer) {
+    this.rate = 0
       let now = new Date().getTime()
       if (xfer.lastXferedBytes) {
-        this.rate = (Math.round((xfer.xferedBytes - xfer.lastXferedBytes) / (1024 * 8) * 100)) / (now - xfer.lastNow)
+        this.rate = Math.round(((xfer.xferedBytes - xfer.lastXferedBytes) / (1024 * 8) * 10000) / (now - xfer.lastNow))/100
       }
-      this.log(`progress: ${xfer.xferedBytes / xfer.size}, rate: ${this.rate} Mbps`)
+      let pc = Math.round(xfer.xferedBytes * 1000 / xfer.size) / 10
+      this.log(`xfer ${xfer.id.toString().padStart(10)} ${pc.toFixed(1).padStart(5)}%, rate: ${this.rate.toFixed(1).toString().padStart(5)} Mbps, ${xfer.xferedPackets}/${xfer.dataPacketCount}`)
       xfer.lastXferedBytes = xfer.xferedBytes
       xfer.lastNow = now
-    })
   }
 
   async addClient(message, {port, address}) {
@@ -151,6 +159,10 @@ class DgramConnection {
       this.log(`client connected: ${JSON.stringify(this.clients[clientKey])}`)
 
       this.sub && this.sub.call(this, this.clients[clientKey])
+    }
+
+    if (message.length === 4 && Buffer.from(message).toString() === 'dump') {
+      this.dump()
     }
   }
 
@@ -164,25 +176,24 @@ class DgramConnection {
   }
 
   async disconnect() {
-    if (this.pingLoopHandle !== undefined) clearInterval(this.pingLoopHandle)
+    // if (this.pingLoopHandle !== undefined) clearInterval(this.pingLoopHandle)
 
     if (this.listening) {
       try {
         await this.socket.close()
       } catch (e) {
-        this.log(`server close failed: ${e.message + '\n' + e.stack}`)
-      }
+        console.log(`server close failed: ${e.message + '\n' + e.stack}`)      }
       
       try {
         await this.socket.disconnect()
       } catch (e) {
-        this.log(`server disconnect failed: ${e.message + '\n' + e.stack}`)
+        console.log(`server disconnect failed: ${e.message + '\n' + e.stack}`)
       }
     } else {
       try {
         await this.socket.disconnect()
       } catch (e) {
-        this.log(`client disconnect failed: ${e.message}`)
+        console.log(`client disconnect failed: ${e.message}`)
       }
     }
   }
@@ -192,10 +203,13 @@ class DgramConnection {
   }
 
   async recvDone(xfer) {
-    this.log(`recv done! ${xfer.tag}`)
+    this.logProcess(xfer)
+    this.log(`xfer done! ${xfer.tag}`)
     clearInterval(xfer._handle)
     clearTimeout(xfer._handle)
-    clearInterval(this.pingLoopHandle)
+
+    if (!this.listening)
+      clearInterval(this.pingLoopHandle)
 
     if (xfer.tag !== 'server') {
       try {
@@ -207,8 +221,7 @@ class DgramConnection {
       
       delete this.xferBufs[xfer.id]
       delete this.xfers[xfer.id]
+      delete this.ids[xfer.id]
     }
-
-    // release buffers, xfers, ids
   }
 }

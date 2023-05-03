@@ -68,7 +68,7 @@ window.addEventListener('load', async () => {
 
 
   enableSocketReload({startDir: process.cwd(),
-    liveReload: (process.env.SERVER !== undefined),
+    liveReload: true,
     updateCallback: () => {
       log(`updateCallback ============`)
       window.location.reload()
@@ -521,10 +521,10 @@ const xfer_test = async () => {
   }
   
   if (runClient) {
-    setInterval(async () => {
+    let timer = setInterval(async () => {
       if (client)
       {
-        if (new Date().getTime() - client.lastPacket > 15000)
+        if (new Date().getTime() - client.lastPacket > 7000)
         {
           log(`reconnecting... (last packet ${client.lastPacket})`)
           client.disconnect()
@@ -537,9 +537,9 @@ const xfer_test = async () => {
           }
           return;
         }
+      } else {
+        client = await reloadClient(listen_address, server_port, { log, packetLength: 1300 })
       }
-
-      client = await reloadClient(listen_address, server_port, { log, packetLength: 1300 })
     }, 500)
   }
   // setTimeout(() => { server.sendBuffer(buffer) }, 500);

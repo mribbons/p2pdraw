@@ -141,8 +141,9 @@ export const recvBuff = async (xferId, socket, encodedStartPacket, address, port
   let startPacket = decodePacket(encodedStartPacket)
   // TODO(@mribbons): Buffer.allocUnsafe doesn't accept BigInt
   let buffer = Buffer.allocUnsafe(parseInt(startPacket.totalSize))
-
-  let xfer = new Xfer(xferId, buffer, packetLength - packetHeaderLength(sendDataPacketOps))
+  let serverPacketLength=(startPacket.totalSize/startPacket.count) + packetHeaderLength(sendDataPacketOps)
+  let xfer = new Xfer(xferId, buffer, serverPacketLength - packetHeaderLength(sendDataPacketOps))
+  xfer.tag = 'client'
   xfer.address = address
   xfer.port = port
   xfer.progressCallback = progressCallback || (() => {})
@@ -238,14 +239,20 @@ const recordAckdPacket = (xfer, status) => {
   if (xfer.statusList[status[1].index] === undefined) {
     status[0] = undefined
     xfer.statusList[status[1].index] = status
-    xfer.xferedPackets++
-    xfer.xferedBytes += dataPacket.buffer.byteLength
+    // server counts packets on send
+    if (xfer.tag !== 'server') {
+      xfer.xferedPackets++
+      xfer.xferedBytes += dataPacket.buffer.byteLength
+    }
     xfer.progressCallback(xfer, dataPacket.index)
-    if (xfer.xferedBytes == xfer.size) {
+    // todo(@mribbons): tags are being set externally, need to differentiate between sender and recipient internally
+    if (xfer.tag === 'client' && xfer.xferedBytes == xfer.size) {
       xfer.completedCallback(xfer)
       clearInterval(xfer._handle)
-      log(`${xfer.tag} transfer completed`)
+      console.log(`${xfer.tag} transfer completed`)
     }
+  } else {
+    console.log(`packet already acked: ${status[1].index}`)
   }
 }
 
@@ -260,6 +267,7 @@ export const sendBuff = async (xferId, socket, address, port, buffer, progressCa
 
   opts = parseOpts(opts);
   let xfer = new Xfer(xferId, buffer, packetLength - packetHeaderLength(sendDataPacketOps))
+  xfer.tag = 'server'
   xfer.address = address
   xfer.port = port
   xfer.progressCallback = progressCallback || (() => {})
@@ -294,6 +302,7 @@ const sendLoop = async (buffer, xfer) => {
     let ts = status[3]
     if (now - ts > xfer.ackTimeout) {
       // console.log(`waiting for ack: ${packet.type} ${hash}, ${now - ts}`)
+      // These are being resent, so uncount them
       xfer.socket.send(status[0], xfer.port, xfer.address)
       status[3] = now
       waiting++
@@ -314,15 +323,19 @@ const sendLoop = async (buffer, xfer) => {
       xfer.socket.send(encodedData, xfer.port, xfer.address)
       xfer.ackList.push(status)
       xfer.packetIndex = dataPacket.index + 1
+      
+      xfer.xferedBytes += status[0].byteLength
+      xfer.xferedPackets++
     } else {
       break;
     }
   }
 
-  if (xfer.packetIndex < xfer.dataPacketCount) {
+  if (xfer.packetIndex < xfer.dataPacketCount || xfer.ackList.length !== 0) {
     xfer._handle = setTimeout( () => sendLoop(buffer, xfer), 20 );
   } else {
-    log(`${xfer.tag} transfer completed`)
+    xfer.completedCallback(xfer)
+    console.log(`${xfer.tag} transfer completed`)
   }
 }
 

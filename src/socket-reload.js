@@ -103,8 +103,8 @@ const enableSocketReload = async (opts = {}) => {
     let parentPath = Path.join(_opts.startDir, `${osParent}../../../..`);
     _log(`ini path: ${`${parentPath}/socket.ini`}`)
     let ini = parseIni(Buffer.from(await fs.readFile(`${parentPath}/socket.ini`)).toString())
-    let _appBasePath = Path.join(process.cwd(), `${parentPath}/../`).replaceAll('\\\\', '\\')
-    _copyPath = Path.join(_appBasePath, ini['build']['copy'].replaceAll('"', ''))
+    let _appBasePath = Path.join(`${parentPath}/../`).replaceAll('\\\\', '\\')
+    _copyPath = Path.join(parentPath, ini['build']['copy'].replaceAll('"', '').trim())
 
     _log(`enableSocketReload: ${opts.enable}, _path: ${_copyPath} => ${_opts.startDir}`)
     
