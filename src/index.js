@@ -68,7 +68,7 @@ window.addEventListener('load', async () => {
 
 
   enableSocketReload({startDir: process.cwd(),
-    liveReload: true,
+    liveReload: (process.env.SERVER !== undefined),
     updateCallback: () => {
       log(`updateCallback ============`)
       window.location.reload()
@@ -88,7 +88,7 @@ window.addEventListener('load', async () => {
     let currWindow = await application.getCurrentWindow()
     // todo(@mribbons): errors aren't written to console on windows
     // todo(@mribbons): doesn't work on windows
-    await currWindow.showInspector()
+    // await currWindow.showInspector()
     // await currWindow.hide()
     // await currWindow.show()
   } catch (e) {
@@ -475,6 +475,8 @@ const windowLoad = async () => {
     server_port = 9988
   }
 
+  log(`server: ${process.env.SERVER}`)
+
   try_catch(xfer_test)
 }
 
@@ -491,7 +493,6 @@ const xfer_test = async () => {
   // let buffer = await fs.readFile(`${process.cwd}/../../../../src/index.html`)
   // should be able to do async read here
   // let buffer = await fs.readFile(`c:\\Users\\mribb\\AppData\\Local\\Programs\\socketsupply\\src\\android\\webview.kt`)
-  let buffer = await fs.readFile("c:\\Program Files\\nodejs\\node.exe")
   //
   // let xfer = await sendBuff(null, buffer, () => { }, () => { }, { log, packetLength: 1300 })
   // let out = await recvBuff(xfer.statusList, null, () => { }, () => { }, { log })
@@ -502,11 +503,46 @@ const xfer_test = async () => {
   // sendBuff(null, buffer, () => { }, () => { }, { log })
   // log(`size: ${xfer._buffer.byteLength}`)
   // global server, client closed by netTestClear()
+  let runClient = process.env.SERVER === undefined
   // these awaits are not reliable, we have no way of knowing if the client has subscribed to the server without an ack
-  server = await reloadServer(listen_address, server_port, { log, packetLength1: 1024 * 1024 })
-  client = await reloadClient(listen_address, server_port, { log, packetLength1: 65536 })
-  log(`server waiting`)
-  setTimeout(() => { server.sendBuffer(buffer) }, 500);
+  try {
+    if (process.env.SERVER) {
+      console.log(`run server...`)
+      let buffer = await fs.readFile("c:\\Program Files\\nodejs\\node.exe")
+      server = await reloadServer(listen_address, server_port, { log, packetLength: 50 * 1024 })
+      log(`server waiting`)
+      server.sub = (client) => {
+        console.log(`client subbed`)
+        server.sendBuffer(buffer, client)
+      }
+    }
+  } catch (e) {
+    runClient = true
+  }
+  
+  if (runClient) {
+    setInterval(async () => {
+      if (client)
+      {
+        if (new Date().getTime() - client.lastPacket > 15000)
+        {
+          log(`reconnecting... (last packet ${client.lastPacket})`)
+          client.disconnect()
+          client = null
+        } else {
+          if (Object.keys(client.xfers).length === 0 && client.rate !== undefined) {
+            log(`client transfer done, closing test connection.`)
+            client.disconnect()
+            client = null
+          }
+          return;
+        }
+      }
+
+      client = await reloadClient(listen_address, server_port, { log, packetLength: 1300 })
+    }, 500)
+  }
+  // setTimeout(() => { server.sendBuffer(buffer) }, 500);
 }
 
 const androidFileWriteTest = async() => {

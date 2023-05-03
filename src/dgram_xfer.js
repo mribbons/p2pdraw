@@ -46,7 +46,7 @@ class PacketStatus {
 
 let log = () => {}
 let hexDumpWidth = 160
-let packetLength = 1492
+let packetLength = 5 * 1024
 
 /**
  * Convert a buffer to a hex dump string
@@ -105,7 +105,7 @@ export const stripBuffer = (packet) => {
 }
 
 // todo, tune
-let ackTimeout = 10000
+let ackTimeout = 5000
 
 const parseOpts = (opts) => {
   if (opts) {
@@ -154,7 +154,7 @@ export const recvBuff = async (xferId, socket, encodedStartPacket, address, port
 
   xfer._handle = setInterval(() => {
     ackLoop(xfer)
-  }, 50);
+  }, 20);
 
   return [xfer, buffer]
 }
@@ -280,26 +280,33 @@ export const sendBuff = async (xferId, socket, address, port, buffer, progressCa
     log(e.message + '\n' + e.stack)
   }
 
-  xfer._handle = setTimeout( () => sendLoop(buffer, xfer), 50 );
+  xfer._handle = setTimeout( () => sendLoop(buffer, xfer), 20);
 
   return xfer
 }
 
 const sendLoop = async (buffer, xfer) => {
   let now = new Date().getTime()
-  xfer.ackList.forEach((status) => {
-    let [encoded, packet, hash, ts] = status
+  let waiting = 0
+  for (let a = 0; a < xfer.ackList.length; ++a) {
+    let status = xfer.ackList[a]
+    //let [encoded, packet, hash, ts] = status
+    let ts = status[3]
     if (now - ts > xfer.ackTimeout) {
-      log(`waiting for ack: ${packet.type} ${hash}, ${now - ts}`)
-      xfer.socket.send(encoded, xfer.port, xfer.address)
+      // console.log(`waiting for ack: ${packet.type} ${hash}, ${now - ts}`)
+      xfer.socket.send(status[0], xfer.port, xfer.address)
       status[3] = now
+      waiting++
     }
-  })
+  }
+
+  if (waiting > 0)
+    console.log(`waiting for ${waiting}/${xfer.ackList.length} acks, sent ${xfer.packetIndex}/${xfer.dataPacketCount}`)
   
   // not sure if sequential packet method is that great, might be ok with bigger status length
   for (let x = Math.max(xfer.packetIndex, 0); x < xfer.dataPacketCount; x++) {
     let status
-    if (xfer.ackList.length < 65) {
+    if (xfer.ackList.length < 128) {
       let { packet: dataPacket, encoded: encodedData } = await buildSendDataPacket(xfer, buffer, x)
       log(`dataPacket: ${JSON.stringify(stripBuffer(dataPacket))}`)
       // log(`${hexDump(encodedData)}`)
@@ -313,7 +320,7 @@ const sendLoop = async (buffer, xfer) => {
   }
 
   if (xfer.packetIndex < xfer.dataPacketCount) {
-    xfer._handle = setTimeout( () => sendLoop(buffer, xfer), 50 );
+    xfer._handle = setTimeout( () => sendLoop(buffer, xfer), 20 );
   } else {
     log(`${xfer.tag} transfer completed`)
   }
@@ -515,12 +522,18 @@ const buildAckPacket = (xfer, server_xfer_id, ackList, offset) => {
     buffer: Buffer.allocUnsafe(maxAcks * hashBytes)
   }
 
-  for (let i = offset; i < offset + maxAcks; ++i)
+  for (let i = 0; i < maxAcks; ++i)
   {
-    let status = ackList[i]
+    let status = ackList[i + offset]
     let hash = status[2]
     log(`buildAckPacket: ${JSON.stringify(stripBuffer(status[1]))}, ${hash}`)
+    try {
     bufferIOFuncs[hashType][W](packet.buffer, i * hashBytes, hash)
+    } catch (e) {
+      // this error is fixed
+      console.log(`${i}, ${hashBytes}, ${i * hashBytes}, ${xfer.dataSize}, ${packetHeaderLength(ackPacketOps)}, ${offset}, ${maxAcks}:  ${e.message}\n${e.stack}`)
+      return undefined
+    }
   }
 
   return { packet, encoded: encodePacket(ackPacketOps, packet), offet: offset + maxAcks }
