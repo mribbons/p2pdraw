@@ -1,3 +1,4 @@
+import fs from 'socket:fs/promises'
 import dgram from 'socket:dgram'
 import Buffer from 'socket:buffer'
 import { getRandomValues } from 'socket:crypto'
@@ -106,7 +107,7 @@ class DgramConnection {
 
         this.serverIds[xfer_id] = null
         this.log(`server initiating connection`)
-        let [ xfer, buf ] = await recvBuff(this.uniqRand32(), this.socket, data, address, port, null, null, { log: this.log })
+        let [ xfer, buf ] = await recvBuff(this.uniqRand32(), this.socket, data, address, port, (xfer) => {this.recvProgress(xfer)}, (xfer) => {this.recvDone(xfer)}, { log: this.log })
         xfer.tag = 'client'
         this.xfers[xfer.id] = xfer
         this.xferBufs[xfer.id] = buf
@@ -158,5 +159,20 @@ class DgramConnection {
     } else {
       await this.socket.disconnect()
     }
+  }
+
+  async recvProgress(xfer) {
+    this.log(`receive progress: ${xfer.xferedBytes / xfer.size}`)
+  }
+
+  async recvDone(xfer) {
+    try {
+      fs.writeFile(`test.dat`, this.xferBufs[xfer.id])
+    } catch (e) {
+      this.log(`recvDone write error: ${e.message + '\n' + e.stack}`)
+    }
+    this.log(`receive done: ${xfer.id}`)
+
+    // release buffers, xfers, ids
   }
 }

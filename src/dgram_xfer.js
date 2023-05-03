@@ -9,6 +9,8 @@ export class Xfer {
     this._dataSize = dataSize
     this._dataPacketCount = Math.ceil(buffer.byteLength / dataSize)
     this.packetIndex = -1
+    this.xferedPackets = 0
+    this.xferedBytes = 0
   }
   _currSeq = 0;
   get nextSeq () { return this._currSeq++ }
@@ -19,6 +21,7 @@ export class Xfer {
   _packetSize = packetLength;
   get packetSize() { return this._packetSize }
   get dataPacketCount() { return this._dataPacketCount }
+  get size() { return this._buffer.byteLength }
   openStatus = null;
   statusList = []
   doneList = []
@@ -142,11 +145,12 @@ export const recvBuff = async (xferId, socket, encodedStartPacket, address, port
   let xfer = new Xfer(xferId, buffer, packetLength - packetHeaderLength(sendDataPacketOps))
   xfer.address = address
   xfer.port = port
-  xfer.progressCallback = progressCallback
-  xfer.completedCallback = completedCallback
+  xfer.progressCallback = progressCallback || (() => {})
+  xfer.completedCallback = completedCallback || (() => {})
   xfer.ackTimeout = ackTimeout
   xfer.socket = socket
   xfer.statusList = [[encodedStartPacket, startPacket, hashBuffer(encodedStartPacket, 0, encodedStartPacket.byteLength), new Date().getTime()]]
+  xfer.doneList = new Array(xfer.dataPacketCount)
 
   xfer._handle = setInterval(() => {
     ackLoop(xfer)
@@ -175,7 +179,8 @@ export const recvPacket = (buffer, xfer, packetBuf, packetType) => {
       if (x > -1) {
         // receiver is acking this hash, remove it
         log(`client acked: ${hash}`)
-        xfer.statusList.splice(x, 1)
+        var status = xfer.statusList.splice(x, 1)
+        recordAckdPacket(xfer, status[0])
       } else {
         // this just means packet has already been ackd
         log(`unknown hash being acked: ${hash}, ${JSON.stringify(stripBuffer(dataPacket))}`)
@@ -209,13 +214,30 @@ export const ackLoop = (xfer) => {
   log(`ack loop: \n${hexDump(encoded)}`)
   xfer.socket.send(encoded, xfer.port, xfer.address)
 
+  statuses.forEach(status => recordAckdPacket(xfer, status))
+}
+
+const recordAckdPacket = (xfer, status) => {
+  // Transfer can't be marked as completed until acks have been sent, therefore check packet status here
   // todo(@mribbons) - Store list of comleted packets on disk, for performance and resume
-  // todo(@mribbons) - This doesn't account for duplicate received packets
-  xfer.doneList.push(...statuses)
-  if (xfer.doneList.length >= xfer.dataPacketCount) {
-    log(`${xfer.tag} transfer completed`)
-  } else {
-    log(`${xfer.tag} not done: ${xfer.doneList.length}, ${xfer.dataPacketCount}`)
+  if(xfer.tag === 'server') {
+    log(`server record ack ${JSON.stringify(stripBuffer(status[1]))}`)
+  }
+  var dataPacket = status[1]
+  if (dataPacket.type !== PACKET_TYPE_DATA) {
+    return
+  }
+
+  if (xfer.doneList[status[1].index] === undefined) {
+    xfer.doneList[status[1].index] = status
+    xfer.xferedPackets++
+    xfer.xferedBytes += dataPacket.buffer.byteLength
+    xfer.progressCallback(xfer, dataPacket.index)
+    if (xfer.xferedBytes == xfer.size) {
+      xfer.completedCallback(xfer)
+      clearInterval(xfer._handle)
+      log(`${xfer.tag} transfer completed`)
+    }
   }
 }
 
@@ -232,8 +254,8 @@ export const sendBuff = async (xferId, socket, address, port, buffer, progressCa
   let xfer = new Xfer(xferId, buffer, packetLength - packetHeaderLength(sendDataPacketOps))
   xfer.address = address
   xfer.port = port
-  xfer.progressCallback = progressCallback
-  xfer.completedCallback = completedCallback
+  xfer.progressCallback = progressCallback || (() => {})
+  xfer.completedCallback = completedCallback || (() => {})
   xfer.ackTimeout = ackTimeout
   xfer.socket = socket
 
@@ -395,7 +417,7 @@ const encodePacket = (packetOps, p) => {
     throw `packet.position must be specified when encoding a buffer`
   }
   let buf = Buffer.allocUnsafe(packetHeaderLength(packetOps) + (p.dataLength !== undefined ? p.dataLength : 0))
-  log(`build packet size: ${buf.byteLength}`)
+  // log(`build packet size: ${buf.byteLength}`)
   let offset = 0
   for (let op of packetOps) {
     if (p[op[PKT_FIELD]] === undefined) {
@@ -405,11 +427,11 @@ const encodePacket = (packetOps, p) => {
     let old_offset = offset
     if (op[DATA_TYPE] === BUFFER) {
       offset = bufferIOFuncs[op[DATA_TYPE]][W](buf, offset, p[op[PKT_FIELD]], p.position, p.dataLength)
-      log(`offset ${old_offset} += ${p.dataLength} = ${offset}`)
+      // log(`offset ${old_offset} += ${p.dataLength} = ${offset}`)
     } else {
-      log(`write ${DATA_TYPE}: ${p[op[PKT_FIELD]]}`)
+      // log(`write ${DATA_TYPE}: ${p[op[PKT_FIELD]]}`)
       offset = bufferIOFuncs[op[DATA_TYPE]][W](buf, offset, p[op[PKT_FIELD]])
-      log(`offset ${old_offset} += ${bufferLengths[op[DATA_TYPE]]} = ${offset}`)
+      // log(`offset ${old_offset} += ${bufferLengths[op[DATA_TYPE]]} = ${offset}`)
     }
   }
 
