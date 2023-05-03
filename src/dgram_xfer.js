@@ -11,6 +11,7 @@ export class Xfer {
     this.packetIndex = -1
     this.xferedPackets = 0
     this.xferedBytes = 0
+    this.lastRecvd = new Date().getTime()
   }
   _currSeq = 0;
   get nextSeq () { return this._currSeq++ }
@@ -161,6 +162,7 @@ export const recvBuff = async (xferId, socket, encodedStartPacket, address, port
 }
 
 export const recvPacket = (buffer, xfer, packetBuf, packetType) => {
+  xfer.lastRecvd = new Date().getTime()
   if (!packetType) {
     packetType = peekPacket(packetBuf)
   }
@@ -206,7 +208,23 @@ export const recvPacket = (buffer, xfer, packetBuf, packetType) => {
   return false
 }
 
+export const checkTimeout = (xfer, now) => {
+  if (!now) {
+    now = new Date().getTime()
+  }
+  if (now - xfer.lastRecvd > 30000) {
+    log(`${xfer.id} connection timed out`)
+    clearInterval(xfer._handle)
+    xfer.completedCallback(xfer)
+    return true
+  }
+
+  return false
+}
+
 export const ackLoop = (xfer) => {
+  if (checkTimeout(xfer)) return
+
   if (xfer.ackList.length === 0) {
     return
   }
@@ -295,6 +313,9 @@ export const sendBuff = async (xferId, socket, address, port, buffer, progressCa
 
 const sendLoop = async (buffer, xfer) => {
   let now = new Date().getTime()
+  if (checkTimeout(xfer, now)) {
+    return
+  }  
   let waiting = 0
   for (let a = 0; a < xfer.ackList.length; ++a) {
     let status = xfer.ackList[a]

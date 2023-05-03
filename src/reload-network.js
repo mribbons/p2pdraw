@@ -140,14 +140,19 @@ class DgramConnection {
 
   logProcess(xfer) {
     this.rate = 0
-      let now = new Date().getTime()
-      if (xfer.lastXferedBytes) {
-        this.rate = Math.round(((xfer.xferedBytes - xfer.lastXferedBytes) / (1024 * 8) * 10000) / (now - xfer.lastNow))/100
-      }
-      let pc = Math.round(xfer.xferedBytes * 1000 / xfer.size) / 10
-      this.log(`xfer ${xfer.id.toString().padStart(10)} ${pc.toFixed(1).padStart(5)}%, rate: ${this.rate.toFixed(1).toString().padStart(5)} Mbps, ${xfer.xferedPackets}/${xfer.dataPacketCount}`)
-      xfer.lastXferedBytes = xfer.xferedBytes
-      xfer.lastNow = now
+    let now = new Date().getTime()
+
+    // don't report dead connections
+    if (now - xfer.lastRecvd > 5000)
+      return
+
+    if (xfer.lastXferedBytes) {
+      this.rate = Math.round(((xfer.xferedBytes - xfer.lastXferedBytes) / (1024 * 8) * 10000) / (now - xfer.lastNow))/100
+    }
+    let pc = Math.round(xfer.xferedBytes * 1000 / xfer.size) / 10
+    this.log(`xfer ${xfer.id.toString().padStart(10)} ${pc.toFixed(1).padStart(5)}%, rate: ${this.rate.toFixed(1).toString().padStart(5)} Mbps, ${xfer.xferedPackets}/${xfer.dataPacketCount}`)
+    xfer.lastXferedBytes = xfer.xferedBytes
+    xfer.lastNow = now
   }
 
   async addClient(message, {port, address}) {
@@ -204,24 +209,31 @@ class DgramConnection {
 
   async recvDone(xfer) {
     this.logProcess(xfer)
-    this.log(`xfer done! ${xfer.tag}`)
     clearInterval(xfer._handle)
     clearTimeout(xfer._handle)
 
-    if (!this.listening)
-      clearInterval(this.pingLoopHandle)
+    let xferComplete = xfer.xferedBytes === this.xferBufs[xfer.id].byteLength
 
-    if (xfer.tag !== 'server') {
+    if (xferComplete)
+      this.log(`xfer done! ${xfer.id}`)
+    else
+      this.log(`xfer failed :( ${xfer.id}`)
+
+    delete this.xferBufs[xfer.id]
+    delete this.xfers[xfer.id]
+    delete this.ids[xfer.id]
+
+    if (!this.listening) {
+      clearInterval(this.pingLoopHandle)
+    
       try {
-        fs.writeFile(`test.dat`, this.xferBufs[xfer.id])
+        if (xferComplete) {
+          fs.writeFile(`test.dat`, this.xferBufs[xfer.id])
+        }
       } catch (e) {
         this.log(`recvDone write error: ${e.message + '\n' + e.stack}`)
       }
       this.log(`receive done: ${xfer.id}`)
-      
-      delete this.xferBufs[xfer.id]
-      delete this.xfers[xfer.id]
-      delete this.ids[xfer.id]
     }
   }
 }

@@ -526,9 +526,9 @@ const xfer_test = async () => {
       {
         if (new Date().getTime() - client.lastPacket > 7000)
         {
-          log(`reconnecting... (last packet ${client.lastPacket})`)
-          client.disconnect()
-          client = null
+          // log(`reconnecting... (last packet ${client.lastPacket})`)
+          // client.disconnect()
+          // client = null
         } else {
           if (Object.keys(client.xfers).length === 0 && client.rate !== undefined) {
             log(`client transfer done, closing test connection.`)
