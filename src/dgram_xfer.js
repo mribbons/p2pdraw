@@ -23,8 +23,8 @@ export class Xfer {
   get dataPacketCount() { return this._dataPacketCount }
   get size() { return this._buffer.byteLength }
   openStatus = null;
+  ackList = []
   statusList = []
-  doneList = []
   get handle() { return this._handle }
 }
 
@@ -135,8 +135,8 @@ export const recvBuff = async (xferId, socket, encodedStartPacket, address, port
   // how does callee init buffer without knowing length
   // probably want to asynchronously init file, otherwise large file space reservation takes a long time, should be receiving stream during that time
   // Fake stuff, not implemented properly yet
-  // let statusList = socket;
-  // let headerPacket = decodePacket(statusList[0][0])
+  // let ackList = socket;
+  // let headerPacket = decodePacket(ackList[0][0])
 
   let startPacket = decodePacket(encodedStartPacket)
   // TODO(@mribbons): Buffer.allocUnsafe doesn't accept BigInt
@@ -149,8 +149,8 @@ export const recvBuff = async (xferId, socket, encodedStartPacket, address, port
   xfer.completedCallback = completedCallback || (() => {})
   xfer.ackTimeout = ackTimeout
   xfer.socket = socket
-  xfer.statusList = [[encodedStartPacket, startPacket, hashBuffer(encodedStartPacket, 0, encodedStartPacket.byteLength), new Date().getTime()]]
-  xfer.doneList = new Array(xfer.dataPacketCount)
+  xfer.ackList = [[encodedStartPacket, startPacket, hashBuffer(encodedStartPacket, 0, encodedStartPacket.byteLength), new Date().getTime()]]
+  xfer.statusList = new Array(xfer.dataPacketCount)
 
   xfer._handle = setInterval(() => {
     ackLoop(xfer)
@@ -175,11 +175,11 @@ export const recvPacket = (buffer, xfer, packetBuf, packetType) => {
   if (packetType === PACKET_TYPE_ACK) {
     for (let offset = 0; offset < dataPacket.buffer.byteLength; offset += bufferLengths[u32]) {
       let hash = bufferIOFuncs[u32][R](dataPacket.buffer, offset)
-      let x = xfer.statusList.findIndex(status => status[2] === hash )
+      let x = xfer.ackList.findIndex(status => status[2] === hash )
       if (x > -1) {
         // receiver is acking this hash, remove it
         log(`client acked: ${hash}`)
-        var status = xfer.statusList.splice(x, 1)
+        var status = xfer.ackList.splice(x, 1)
         recordAckdPacket(xfer, status[0])
       } else {
         // this just means packet has already been ackd
@@ -196,7 +196,7 @@ export const recvPacket = (buffer, xfer, packetBuf, packetType) => {
       // todo(@mribbons): check if packet already in status list
       // should always just ack back already received packets in case server didn't receive previous ack
       dataPacket.buffer.copy(buffer, dataPacket.index * xfer.dataSize)
-      xfer.statusList.push([packetBuf, dataPacket, testHash, new Date().getTime()])
+      xfer.ackList.push([packetBuf, dataPacket, testHash, new Date().getTime()])
     }
 
     return true
@@ -206,10 +206,10 @@ export const recvPacket = (buffer, xfer, packetBuf, packetType) => {
 }
 
 export const ackLoop = (xfer) => {
-  if (xfer.statusList.length === 0) {
+  if (xfer.ackList.length === 0) {
     return
   }
-  let statuses = xfer.statusList.splice(0, xfer.statusList.length)
+  let statuses = xfer.ackList.splice(0, xfer.ackList.length)
   let { encoded } = buildAckPacket(xfer, statuses[0][1].id, statuses)
   log(`ack loop: \n${hexDump(encoded)}`)
   xfer.socket.send(encoded, xfer.port, xfer.address)
@@ -228,8 +228,8 @@ const recordAckdPacket = (xfer, status) => {
     return
   }
 
-  if (xfer.doneList[status[1].index] === undefined) {
-    xfer.doneList[status[1].index] = status
+  if (xfer.statusList[status[1].index] === undefined) {
+    xfer.statusList[status[1].index] = status
     xfer.xferedPackets++
     xfer.xferedBytes += dataPacket.buffer.byteLength
     xfer.progressCallback(xfer, dataPacket.index)
@@ -264,7 +264,7 @@ export const sendBuff = async (xferId, socket, address, port, buffer, progressCa
     let { packet: startPacket, encoded } = buildSendStartPacket(xfer, buffer)
     log(`startPacket: ${JSON.stringify(stripBuffer(startPacket))}`)
     log(`${hexDump(encoded)}`)
-    xfer.statusList.push([encoded, startPacket, hashBuffer(encoded, 0, encoded.byteLength), new Date().getTime()])
+    xfer.ackList.push([encoded, startPacket, hashBuffer(encoded, 0, encoded.byteLength), new Date().getTime()])
     xfer.socket.send(encoded, xfer.port, xfer.address)
     // send first round of data packets before adding start packet to status list, otherwise ack check will be performed
     await sendLoop(buffer, xfer)
@@ -279,7 +279,7 @@ export const sendBuff = async (xferId, socket, address, port, buffer, progressCa
 
 const sendLoop = async (buffer, xfer) => {
   let now = new Date().getTime()
-  xfer.statusList.forEach((status) => {
+  xfer.ackList.forEach((status) => {
     let [encoded, packet, hash, ts] = status
     if (now - ts > xfer.ackTimeout) {
       log(`waiting for ack: ${packet.type} ${hash}, ${now - ts}`)
@@ -291,13 +291,13 @@ const sendLoop = async (buffer, xfer) => {
   // not sure if sequential packet method is that great, might be ok with bigger status length
   for (let x = Math.max(xfer.packetIndex, 0); x < xfer.dataPacketCount; x++) {
     let status
-    if (xfer.statusList.length < 3) {
+    if (xfer.ackList.length < 3) {
       let { packet: dataPacket, encoded: encodedData } = await buildSendDataPacket(xfer, buffer, x)
       log(`dataPacket: ${JSON.stringify(stripBuffer(dataPacket))}`)
       // log(`${hexDump(encodedData)}`)
       status = [encodedData, dataPacket, dataPacket.hash, new Date().getTime()]
       xfer.socket.send(encodedData, xfer.port, xfer.address)
-      xfer.statusList.push(status)
+      xfer.ackList.push(status)
       xfer.packetIndex = dataPacket.index + 1
     } else {
       break;
@@ -493,17 +493,16 @@ const readSendStartPacket = (buffer) => {
   return decodePacket(sendStartPacketOps, buffer) 
 }
 
-const buildAckPacket = (xfer, server_xfer_id, statusList) => {
+const buildAckPacket = (xfer, server_xfer_id, ackList) => {
   var packet = {
     type: PACKET_TYPE_ACK,
     id: server_xfer_id,
     position: 0,
-    dataLength: statusList.length * bufferLengths[u32],
-    buffer: Buffer.allocUnsafe(statusList.length * bufferLengths[u32])
+    dataLength: ackList.length * bufferLengths[u32],
+    buffer: Buffer.allocUnsafe(ackList.length * bufferLengths[u32])
   }
 
-  statusList.forEach((status, i) => {
-    
+  ackList.forEach((status, i) => {
     let hash = status[2]
     log(`buildAckPacket: ${JSON.stringify(stripBuffer(status[1]))}, ${hash}`)
     bufferIOFuncs[u32][W](packet.buffer, i * bufferLengths[u32], hash)
