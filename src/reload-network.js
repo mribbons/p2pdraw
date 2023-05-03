@@ -86,7 +86,7 @@ class DgramConnection {
     this.log(`sending buffer to ${JSON.stringify(this.clients)}`)
 
     Object.keys(clients).forEach((clientKey) => {
-      sendBuff(this.uniqRand32(), this.socket, clients[clientKey].address, this.clients[clientKey].port, buffer, null, null, { log: this.log })
+      sendBuff(this.uniqRand32(), this.socket, clients[clientKey].address, this.clients[clientKey].port, buffer, null, null, { /*log: this.log*/ })
         .then((xfer) => { 
           xfer.tag = 'server'
           this.xfers[xfer.id] = xfer
@@ -107,12 +107,15 @@ class DgramConnection {
 
         this.serverIds[xfer_id] = null
         this.log(`server initiating connection`)
-        let [ xfer, buf ] = await recvBuff(this.uniqRand32(), this.socket, data, address, port, (xfer) => {this.recvProgress(xfer)}, (xfer) => {this.recvDone(xfer)}, { log: this.log })
+        let [ xfer, buf ] = await recvBuff(this.uniqRand32(), this.socket, data, address, port, (xfer) => {this.recvProgress(xfer)}, (xfer) => {this.recvDone(xfer)}, { /*log: this.log*/ })
         xfer.tag = 'client'
         this.xfers[xfer.id] = xfer
         this.xferBufs[xfer.id] = buf
         // server -> client id lookup
         this.serverIds[xfer_id] = xfer.id
+        setInterval(() => {
+          this.log(`progress: ${xfer.xferedBytes / xfer.size}`)
+        }, 1000)
       } else if (packetType === PACKET_TYPE_DATA) {
         // todo(mribbons): check xfer id, address, port match
         if (this.xfers[this.serverIds[xfer_id]] !== undefined) {
@@ -162,7 +165,7 @@ class DgramConnection {
   }
 
   async recvProgress(xfer) {
-    this.log(`receive progress: ${xfer.xferedBytes / xfer.size}`)
+    // this.log(`receive progress: ${xfer.xferedBytes / xfer.size}`)
   }
 
   async recvDone(xfer) {

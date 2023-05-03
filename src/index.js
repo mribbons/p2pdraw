@@ -19,8 +19,14 @@ const log = (...args) => {
   for (let arg of args) {
     let out = arg
     if (typeof arg !== 'string') out = JSON.stringify(arg)
-    console.log(arg)    
-    logElem && (logElem.innerText += out + '\n')
+    console.log(arg)
+    if (logElem) 
+    {
+      logElem.innerText += out + '\n'
+      if (logElem.innerText.length > 100000) {
+        logElem.innerText = logElem.innerText.substring(65536)
+      }
+    }
   }
 
   document.scrollingElement.scrollTo(0, document.scrollingElement.scrollHeight)
@@ -484,7 +490,9 @@ const xfer_test = async () => {
   // let xfer = new Xfer(1234, Buffer.from(await fs.readFile(`${process.cwd}/../../../../src/index.html`)))
   // let buffer = await fs.readFile(`${process.cwd}/../../../../src/index.html`)
   // should be able to do async read here
-  let buffer = await fs.readFile(`c:\\Users\\mribb\\AppData\\Local\\Programs\\socketsupply\\src\\android\\webview.kt`)
+  // let buffer = await fs.readFile(`c:\\Users\\mribb\\AppData\\Local\\Programs\\socketsupply\\src\\android\\webview.kt`)
+  let buffer = await fs.readFile("c:\\Program Files\\nodejs\\node.exe")
+  //
   // let xfer = await sendBuff(null, buffer, () => { }, () => { }, { log, packetLength: 1300 })
   // let out = await recvBuff(xfer.statusList, null, () => { }, () => { }, { log })
   // fs.writeFile(`c:\\Users\\mribb\\AppData\\Local\\Programs\\socketsupply\\src\\android\\webview_recv.kt`, out)
@@ -495,8 +503,8 @@ const xfer_test = async () => {
   // log(`size: ${xfer._buffer.byteLength}`)
   // global server, client closed by netTestClear()
   // these awaits are not reliable, we have no way of knowing if the client has subscribed to the server without an ack
-  server = await reloadServer(listen_address, server_port, { log, ackTimeout: 20 })
-  client = await reloadClient(listen_address, server_port, { log })
+  server = await reloadServer(listen_address, server_port, { log, packetLength1: 1024 * 1024 })
+  client = await reloadClient(listen_address, server_port, { log, packetLength1: 65536 })
   log(`server waiting`)
   setTimeout(() => { server.sendBuffer(buffer) }, 500);
 }

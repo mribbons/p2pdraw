@@ -105,7 +105,7 @@ export const stripBuffer = (packet) => {
 }
 
 // todo, tune
-let ackTimeout = 1000
+let ackTimeout = 10000
 
 const parseOpts = (opts) => {
   if (opts) {
@@ -154,7 +154,7 @@ export const recvBuff = async (xferId, socket, encodedStartPacket, address, port
 
   xfer._handle = setInterval(() => {
     ackLoop(xfer)
-  }, 1000);
+  }, 50);
 
   return [xfer, buffer]
 }
@@ -210,9 +210,16 @@ export const ackLoop = (xfer) => {
     return
   }
   let statuses = xfer.ackList.splice(0, xfer.ackList.length)
-  let { encoded } = buildAckPacket(xfer, statuses[0][1].id, statuses)
-  log(`ack loop: \n${hexDump(encoded)}`)
-  xfer.socket.send(encoded, xfer.port, xfer.address)
+  let _offset = 0
+  while (true) {
+      let { encoded, packet, offet: offset } = buildAckPacket(xfer, statuses[0][1].id, statuses, _offset)
+      _offset = offset
+      log(`ack loop: o: ${offset}\n${hexDump(encoded)}`)
+      xfer.socket.send(encoded, xfer.port, xfer.address)
+      if (_offset === statuses.length) {
+        break
+      }
+    }
 
   statuses.forEach(status => recordAckdPacket(xfer, status))
 }
@@ -229,6 +236,7 @@ const recordAckdPacket = (xfer, status) => {
   }
 
   if (xfer.statusList[status[1].index] === undefined) {
+    status[0] = undefined
     xfer.statusList[status[1].index] = status
     xfer.xferedPackets++
     xfer.xferedBytes += dataPacket.buffer.byteLength
@@ -272,7 +280,7 @@ export const sendBuff = async (xferId, socket, address, port, buffer, progressCa
     log(e.message + '\n' + e.stack)
   }
 
-  xfer._handle = setTimeout( () => sendLoop(buffer, xfer), 1050 );
+  xfer._handle = setTimeout( () => sendLoop(buffer, xfer), 50 );
 
   return xfer
 }
@@ -291,7 +299,7 @@ const sendLoop = async (buffer, xfer) => {
   // not sure if sequential packet method is that great, might be ok with bigger status length
   for (let x = Math.max(xfer.packetIndex, 0); x < xfer.dataPacketCount; x++) {
     let status
-    if (xfer.ackList.length < 3) {
+    if (xfer.ackList.length < 65) {
       let { packet: dataPacket, encoded: encodedData } = await buildSendDataPacket(xfer, buffer, x)
       log(`dataPacket: ${JSON.stringify(stripBuffer(dataPacket))}`)
       // log(`${hexDump(encodedData)}`)
@@ -305,7 +313,7 @@ const sendLoop = async (buffer, xfer) => {
   }
 
   if (xfer.packetIndex < xfer.dataPacketCount) {
-    xfer._handle = setTimeout( () => sendLoop(buffer, xfer), 1050 );
+    xfer._handle = setTimeout( () => sendLoop(buffer, xfer), 50 );
   } else {
     log(`${xfer.tag} transfer completed`)
   }
@@ -378,13 +386,15 @@ const ackPacketOps = [
   [ BUFFER,  'buffer' ]
 ]
 
+const hashType = u32
+
 const sendDataPacketOps = [
-  [ u8,     'type'    ],
+  [ u8,       'type'    ],
   // xfer id
-  [ u32,    'id'      ],
-  [ u32,    'index'   ],
-  [ u32,    'hash'    ],
-  [ BUFFER, 'buffer'  ]
+  [ u32,      'id'      ],
+  [ u32,      'index'   ],
+  [ hashType, 'hash'    ],
+  [ BUFFER,   'buffer'  ]
 ]
 
 const packetTypeTable = []
@@ -493,22 +503,27 @@ const readSendStartPacket = (buffer) => {
   return decodePacket(sendStartPacketOps, buffer) 
 }
 
-const buildAckPacket = (xfer, server_xfer_id, ackList) => {
+const buildAckPacket = (xfer, server_xfer_id, ackList, offset) => {
+  const hashBytes = bufferLengths[hashType]
+  // limit ack packet to dataSize - header
+  const maxAcks = Math.min(parseInt(xfer.dataSize / hashBytes) - packetHeaderLength(ackPacketOps) , ackList.length - offset)
   var packet = {
     type: PACKET_TYPE_ACK,
     id: server_xfer_id,
     position: 0,
-    dataLength: ackList.length * bufferLengths[u32],
-    buffer: Buffer.allocUnsafe(ackList.length * bufferLengths[u32])
+    dataLength: ackList.length * hashBytes,
+    buffer: Buffer.allocUnsafe(maxAcks * hashBytes)
   }
 
-  ackList.forEach((status, i) => {
+  for (let i = offset; i < offset + maxAcks; ++i)
+  {
+    let status = ackList[i]
     let hash = status[2]
     log(`buildAckPacket: ${JSON.stringify(stripBuffer(status[1]))}, ${hash}`)
-    bufferIOFuncs[u32][W](packet.buffer, i * bufferLengths[u32], hash)
-  })
+    bufferIOFuncs[hashType][W](packet.buffer, i * hashBytes, hash)
+  }
 
-  return { packet, encoded: encodePacket(ackPacketOps, packet) }
+  return { packet, encoded: encodePacket(ackPacketOps, packet), offet: offset + maxAcks }
 }
 
 const buildSendDataPacket = (xfer, buffer, index) => {
