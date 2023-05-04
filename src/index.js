@@ -477,7 +477,8 @@ const windowLoad = async () => {
 
   log(`server: ${process.env.SERVER}`)
 
-  try_catch(xfer_test)
+  if (process.env.SENDFILE)
+    try_catch(xfer_test)
 }
 
 const try_catch = async (fn) => {
@@ -508,7 +509,7 @@ const xfer_test = async () => {
   try {
     if (process.env.SERVER) {
       console.log(`run server...`)
-      let buffer = await fs.readFile("c:\\Program Files\\nodejs\\node.exe")
+      let buffer = await fs.readFile(process.env.SENDFILE)
       server = await reloadServer(listen_address, server_port, { log, packetLength: 50 * 1024 })
       log(`server waiting`)
       server.sub = (client) => {
