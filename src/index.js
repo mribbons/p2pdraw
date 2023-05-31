@@ -1,17 +1,11 @@
 import fs from 'socket:fs/promises'
-
+import enableSocketReload from "socket:reload"
 import { Peer } from 'socket:peer'
 import { randomBytes } from 'socket:crypto'
 import process from 'socket:process'
 import os from 'socket:os'
 import Buffer from 'socket:buffer'
-import enableSocketReload from './socket-reload.js'
 import application from 'socket:application'
-import NetTest from './NetTest.js'
-import { reloadServer, reloadClient } from './reload-network.js'
-// import fs from 'socket:fs'
-
-import { Xfer, recvBuff, sendBuff } from './dgram_xfer.js'
 
 let logElem = document.getElementById('logPre')
 
@@ -53,50 +47,28 @@ window.addEventListener('load', async () => {
     // if (event.key === 'b') sscBuildOutput(process.cwd())
   })
 
-  windowLoad()
-
-  // window.addEventListener("keydown", (event) => {
-  //   if(((event.ctrlKey || event.metaKey) && event.key === 'r') || event.key == 'F5') {
-  //     event.preventDefault();
-  //     window.location.reload();
-  //   }
-  // })
-
-  // connect()
-  // enableAppRefresh({ path: ".\\..\\..\\..\\src" })
-  // enableSocketReload({startDir: process.cwd()})
-
-
   enableSocketReload({startDir: process.cwd(),
     liveReload: true,
-    updateCallback: () => {
-      log(`updateCallback ============`)
+    serviceId: window.__args.config.meta_bundle_identifier,
+    secret: process.env.RELOAD_SECRET,
+    serverHost: process.env.RELOAD_HOST || "127.0.0.1",
+    serverPort: process.env.RELOAD_PORT || 9990,
+    // if server is already running, or address can't be bound because it's not on this machine
+    // then reload operation will fall back to running as a client
+    runServer: true,
+    updateCallback: async () => {
+      log(`files changed.`)
       window.location.reload()
     },
-    scanInterval: 200,
+    scanInterval: 3000,
     debounce: 500,
-    debounceCallback: () => {
+    debounceCallback: async () => {
       log(`updates inbound, closing network`);
-      netTestClear()
     },
-    log: log
+    // log: log,
+    packetLength: 1024
   })
 
-  // doesn't work
-  log(`open inspector`)
-  try {
-    let currWindow = await application.getCurrentWindow()
-    // todo(@mribbons): errors aren't written to console on windows
-    // todo(@mribbons): doesn't work on windows
-    // await currWindow.showInspector()
-    // await currWindow.hide()
-    // await currWindow.show()
-  } catch (e) {
-    log(`error opening inspector ${e.message + '\n' + e.stack}`)
-  }
-  // var name = Path.win32.dirname('d:\\code\\socket')
-  // log(`dirname(\'d:\\code\\socket\'): ${name}`)
-  // sscBuildOutput(process.cwd())
 })
 
 // test port hardcoded
@@ -239,8 +211,8 @@ const connect = async() => {
       const packetOpts = {
         previousId: previousId,
         clusterId: clusterId,
-        // to: publicKey,
-        to: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        to: publicKey,
+        // to: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         message: {
           peerId: publicKey,
           content: data,
@@ -346,232 +318,10 @@ const connect = async() => {
   }
 }
 
-
-let server = undefined
-let twoway = undefined
-let client_address, client_port
-let server_port = 0
-let listen_address = '0.0.0.0'
-let _client_address = '0.0.0.0'
-
-const netTestServer = async () => {
-  if (!server_port) {
-    throw "Server port not set."
-  }
-  log(`server listen...`)
-  try {
-    server = new NetTest('0.0.0.0', server_port, log)
-    await server.listen((err) => {
-      if (err)  {
-        log(err)
-        log(`server listen failed, connecting as client.`)
-        netTestClient()
-        return
-      }
-      
-      else log('server listening.')
-    })
-    server.socket.on('message', async (data, {port, address}) =>  {
-      client_address = address
-      client_port = port
-      log(`server received ${data} from ${address}:${port}`)
-      let e = await server.send(`ack ${data}`, port, address, () => {
-        // log(`server send done`)
-      })
-      if (e) {
-        log(`server send error: ${e.message + '\n' + e.stack}`)
-      }
-    })
-    twoway = server
-  } catch (e) {
-    log(`server error: ${e.message + '\n' + e.stack}`)
-  }
-}
-
-let client = undefined
-
-const netTestClient = async () => {
-  if (!server_port) {
-    throw "Server port not set."
-  }
-  log(`client connecting to ${listen_address}:${server_port}`);
-  try {
-    client = new NetTest(listen_address, server_port, log)
-    await client.connect((e) => {
-      if (e) {
-        log(`client connect failed: ${e.message + '\n' + e.stack}`)
-      } else {
-        log(`client connected`)
-        twoway = client
-      }
-    }, async (data, {port, address}) =>  {
-      log(`client received2 ${data}`)
-      twoway = client
-      client.socket.on('message', async (data, {port, address}) =>  {
-        log(`client received ${data}`)
-      })
-    })
-
-    client.socket.on('message', async (data, {port, address}) =>  {
-      log(`client received ${data}`)
-    })
-  } catch (e) {
-    log(`client error: ${e.message + '\n' + e.stack}`)
-  }
-}
-
-const netTestClientSend = async () => {
-  try {
-    let e
-    if (client_address) {
-      e = await twoway.send('hello from server')
-    } else {
-      e = await twoway.send(`Hello it's ${new Date().toISOString()}`)
-    }
-    if (e) {
-      log(`client send error: ${e.message + '\n' + e.stack}`)
-    } else {
-      // log(`client send done`)
-    }
-  } catch (e) {
-    log(`client error: ${e.message + '\n' + e.stack}`)
-  }
-}
-
-const netTestClear = async () => {
-  log(`netTestClear()`)
-  let _server = server
-  let _client = client
-  server = null
-  client = null
-  try {
-    // todo(@mribbons): This doesn't work, can't relisten on same address
-    if (_server) await _server.disconnect()
-    if (_client) await _client.disconnect()
-  } catch (e) {
-    log(`net clear error: ${e.message + '\n' + e.stack}`)
-  }
-}
-const windowLoad = async () => {
-  log(`window load`);
-
-  // log(`config: ` + JSON.stringify(window.__args.config, ' '))
-  
-  // setTimeout(androidFileWriteTest, 500)
-  window.addEventListener("beforeunload", async () => {
-    netTestClear()
-  })
-
-  log(`reload host: ${process.env.RELOAD_HOST}`)
-  var hostParts = process.env.RELOAD_HOST.split(':')
-  listen_address = hostParts[0];
-  if (hostParts[1]) {
-    try {
-      server_port = parseInt(hostParts[1])    
-    } catch (err) {
-      log(`failed to parse port from: ${hostParts[1]}: ${err.message + '\n' + err.stack}`)
-    }
-  } else {
-    server_port = 9988
-  }
-
-  log(`server: ${process.env.SERVER}`)
-
-  if (process.env.SENDFILE)
-    try_catch(xfer_test)
-}
-
 const try_catch = async (fn) => {
   try {
     await fn()
   } catch (e) {
     log(e.message + '\n' + e.stack)
-  }
-}
-
-const xfer_test = async () => {
-  // let xfer = new Xfer(1234, Buffer.from(await fs.readFile(`${process.cwd}/../../../../src/index.html`)))
-  // let buffer = await fs.readFile(`${process.cwd}/../../../../src/index.html`)
-  // should be able to do async read here
-  // let buffer = await fs.readFile(`c:\\Users\\mribb\\AppData\\Local\\Programs\\socketsupply\\src\\android\\webview.kt`)
-  //
-  // let xfer = await sendBuff(null, buffer, () => { }, () => { }, { log, packetLength: 1300 })
-  // let out = await recvBuff(xfer.statusList, null, () => { }, () => { }, { log })
-  // fs.writeFile(`c:\\Users\\mribb\\AppData\\Local\\Programs\\socketsupply\\src\\android\\webview_recv.kt`, out)
-  // for (let x = 0; x < xfer.statusList.length; ++x) {
-  //   onReceivePacket()
-  // }
-  // sendBuff(null, buffer, () => { }, () => { }, { log })
-  // log(`size: ${xfer._buffer.byteLength}`)
-  // global server, client closed by netTestClear()
-  let runClient = process.env.SERVER === undefined
-  // these awaits are not reliable, we have no way of knowing if the client has subscribed to the server without an ack
-  try {
-    if (process.env.SERVER) {
-      console.log(`run server...`)
-      let buffer = await fs.readFile(process.env.SENDFILE)
-      server = await reloadServer(listen_address, server_port, { log, packetLength: 50 * 1024 })
-      log(`server waiting`)
-      server.sub = (client) => {
-        console.log(`client subbed`)
-        server.sendBuffer(buffer, client)
-      }
-    }
-  } catch (e) {
-    runClient = true
-  }
-  
-  if (runClient) {
-    let timer = setInterval(async () => {
-      if (client)
-      {
-        if (new Date().getTime() - client.lastPacket > 7000)
-        {
-          // log(`reconnecting... (last packet ${client.lastPacket})`)
-          // client.disconnect()
-          // client = null
-        } else {
-          if (Object.keys(client.xfers).length === 0 && client.rate !== undefined) {
-            log(`client transfer done, closing test connection.`)
-            client.disconnect()
-            client = null
-          }
-          return;
-        }
-      } else {
-        client = await reloadClient(listen_address, server_port, { log, packetLength: 1300 })
-      }
-    }, 500)
-  }
-  // setTimeout(() => { server.sendBuffer(buffer) }, 500);
-}
-
-const androidFileWriteTest = async() => {
-  log(`cwd: ${process.cwd()}`)
-  try {
-    let html = `
-    <html>
-    <script>
-    log('javascript.......')
-    </script>
-    <body>
-    <p>hello</p>
-    </body>
-    </html>
-    `
-    await fs.writeFile("test.html", Buffer.from(html).buffer)
-    log(`initial location: ${window.location.href}`)
-    // let location = `file://${process.cwd()}/test.html`
-    let location = `reload:${process.cwd()}/test.html`
-    log(`nav to ${location}`)
-    window.location.href = location
-    // log(`wrote file`);
-    // no files in app/files on android
-    // for (const entry of (await fs.readdir(`${process.cwd()}`, {withFileTypes: true}))) {
-    //   log(`file: ${entry.name}`)
-    // }
-    // await fs.readFile("test.html")
-  } catch (e) {
-    log(`file error: ${e.message + '\n' + e.stack}`)
   }
 }
